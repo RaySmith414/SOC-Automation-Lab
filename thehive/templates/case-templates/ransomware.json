@@ -1,0 +1,107 @@
+{
+  "name": "Ransomware Incident",
+  "displayName": "Ransomware Attack Response",
+  "titlePrefix": "[RANSOMWARE]",
+  "description": "Critical incident template for ransomware attack response",
+  "severity": 4,
+  "tags": ["ransomware", "critical", "incident-response", "encryption"],
+  "flag": true,
+  "tlp": 3,
+  "pap": 3,
+  "customFields": {
+    "attack-vector": {
+      "string": "Malware"
+    },
+    "mitre-tactics": {
+      "string": "Impact, Execution, Lateral Movement, Defense Evasion"
+    }
+  },
+  "tasks": [
+    {
+      "order": 1,
+      "title": "IMMEDIATE: Assess Scope",
+      "group": "Identification",
+      "description": "## CRITICAL - IMMEDIATE ASSESSMENT\n\n**TIME SENSITIVE - Complete within 30 minutes**\n\n- [ ] Identify initial infected system(s)\n- [ ] Determine ransomware variant (ransom note, file extensions)\n- [ ] Assess spread - how many systems affected?\n- [ ] Identify critical systems at risk\n- [ ] Document ransom demands (DO NOT ENGAGE)\n- [ ] Notify incident commander"
+    },
+    {
+      "order": 2,
+      "title": "IMMEDIATE: Network Isolation",
+      "group": "Containment",
+      "description": "## CRITICAL - NETWORK ISOLATION\n\n**TIME SENSITIVE - Complete ASAP**\n\n- [ ] Isolate affected network segments\n- [ ] Disable network shares on unaffected systems\n- [ ] Block SMB/RDP at network level\n- [ ] Disable remote access services if compromised\n- [ ] Block outbound C2 communications\n- [ ] Preserve evidence - do NOT power off systems"
+    },
+    {
+      "order": 3,
+      "title": "Backup Assessment",
+      "group": "Containment",
+      "description": "## Backup Status Assessment\n\n- [ ] Verify backup integrity\n- [ ] Ensure backups are isolated/protected\n- [ ] Determine most recent clean backup\n- [ ] Check for backup encryption/deletion\n- [ ] Document backup recovery options\n- [ ] Test backup restoration (on isolated system)"
+    },
+    {
+      "order": 4,
+      "title": "Evidence Preservation",
+      "group": "Investigation",
+      "description": "## Evidence Collection\n\n- [ ] Capture memory from infected systems\n- [ ] Collect ransomware samples\n- [ ] Preserve ransom notes\n- [ ] Document encrypted file extensions\n- [ ] Collect system logs\n- [ ] Preserve network traffic logs"
+    },
+    {
+      "order": 5,
+      "title": "Ransomware Analysis",
+      "group": "Investigation",
+      "description": "## Ransomware Identification\n\n- [ ] Identify ransomware family/variant\n- [ ] Check for known decryptors (nomoreransom.org)\n- [ ] Analyze encryption method\n- [ ] Extract IOCs from samples\n- [ ] Identify threat actor group\n- [ ] Determine attack timeline"
+    },
+    {
+      "order": 6,
+      "title": "Attack Vector Investigation",
+      "group": "Investigation",
+      "description": "## Initial Access Investigation\n\n- [ ] Identify initial infection vector\n- [ ] Review email logs for phishing\n- [ ] Check VPN/RDP access logs\n- [ ] Review vulnerability exploitation\n- [ ] Analyze supply chain compromise\n- [ ] Map attacker timeline"
+    },
+    {
+      "order": 7,
+      "title": "Lateral Movement Analysis",
+      "group": "Investigation",
+      "description": "## Lateral Movement Assessment\n\n- [ ] Identify compromised credentials\n- [ ] Map systems accessed by attacker\n- [ ] Review authentication logs\n- [ ] Identify tools used (PSExec, WMI, etc.)\n- [ ] Determine extent of domain compromise\n- [ ] Check for persistence mechanisms"
+    },
+    {
+      "order": 8,
+      "title": "Executive Communication",
+      "group": "Communication",
+      "description": "## Executive & Stakeholder Updates\n\n- [ ] Brief executive leadership\n- [ ] Engage legal counsel\n- [ ] Notify cyber insurance carrier\n- [ ] Assess regulatory notification requirements\n- [ ] Prepare public communication (if needed)\n- [ ] Document all communications"
+    },
+    {
+      "order": 9,
+      "title": "Eradication",
+      "group": "Remediation",
+      "description": "## Eradication\n\n- [ ] Reset ALL credentials (assume full compromise)\n- [ ] Remove persistence mechanisms\n- [ ] Rebuild/reimage infected systems\n- [ ] Patch vulnerability exploited\n- [ ] Remove attacker access\n- [ ] Verify complete eradication"
+    },
+    {
+      "order": 10,
+      "title": "Recovery",
+      "group": "Remediation",
+      "description": "## Recovery Operations\n\n- [ ] Prioritize critical systems for recovery\n- [ ] Restore from clean backups\n- [ ] Validate restored data integrity\n- [ ] Implement enhanced monitoring\n- [ ] Gradual network reconnection\n- [ ] Verify no reinfection"
+    },
+    {
+      "order": 11,
+      "title": "Security Hardening",
+      "group": "Remediation",
+      "description": "## Security Improvements\n\n- [ ] Implement network segmentation\n- [ ] Deploy enhanced endpoint protection\n- [ ] Enable MFA everywhere\n- [ ] Restrict admin privileges\n- [ ] Improve backup strategy (3-2-1 rule)\n- [ ] Enhance monitoring and alerting"
+    },
+    {
+      "order": 12,
+      "title": "Post-Incident Review",
+      "group": "Closure",
+      "description": "## Post-Incident Activities\n\n- [ ] Complete detailed incident timeline\n- [ ] Conduct lessons learned session\n- [ ] Update incident response procedures\n- [ ] Submit to threat intelligence sharing\n- [ ] Complete regulatory notifications\n- [ ] Update security awareness training"
+    }
+  ],
+  "metrics": {
+    "systemsAffected": {
+      "description": "Total number of systems encrypted"
+    },
+    "dataVolumeAffected": {
+      "description": "Estimated volume of data affected"
+    },
+    "downtimeHours": {
+      "description": "Total business downtime in hours"
+    },
+    "recoveryTime": {
+      "description": "Time to full recovery"
+    }
+  }
+}

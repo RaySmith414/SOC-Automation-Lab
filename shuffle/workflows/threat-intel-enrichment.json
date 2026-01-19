@@ -1,0 +1,261 @@
+{
+  "name": "Threat Intelligence Enrichment Workflow",
+  "description": "Automated IOC enrichment pipeline using multiple threat intelligence sources",
+  "version": "1.0",
+  "author": "SOC Automation Lab",
+  "triggers": [
+    {
+      "id": "trigger_1",
+      "name": "IOC Submission Webhook",
+      "type": "webhook",
+      "description": "Receives IOCs for enrichment",
+      "parameters": {
+        "authentication": "api_key",
+        "method": "POST"
+      }
+    },
+    {
+      "id": "trigger_2",
+      "name": "Scheduled Feed Ingestion",
+      "type": "schedule",
+      "description": "Periodic threat feed processing",
+      "parameters": {
+        "cron": "0 */4 * * *"
+      }
+    },
+    {
+      "id": "trigger_3",
+      "name": "TheHive Observable Created",
+      "type": "webhook",
+      "description": "Triggered when new observable added to TheHive",
+      "parameters": {
+        "authentication": "api_key",
+        "method": "POST"
+      }
+    }
+  ],
+  "actions": [
+    {
+      "id": "action_1",
+      "name": "Parse IOC Input",
+      "app_name": "Shuffle Tools",
+      "app_action": "execute_python",
+      "parameters": {
+        "code": "import re\nimport json\n\ninput_data = $trigger.body\niocs = {'ip': [], 'domain': [], 'url': [], 'hash_md5': [], 'hash_sha256': [], 'hash_sha1': [], 'email': []}\n\n# Handle different input formats\nif isinstance(input_data, dict):\n    if 'observables' in input_data:\n        for obs in input_data['observables']:\n            ioc_type = obs.get('dataType', '').lower()\n            value = obs.get('data', '')\n            if ioc_type == 'ip':\n                iocs['ip'].append(value)\n            elif ioc_type in ['domain', 'fqdn']:\n                iocs['domain'].append(value)\n            elif ioc_type == 'url':\n                iocs['url'].append(value)\n            elif ioc_type == 'hash':\n                if len(value) == 32:\n                    iocs['hash_md5'].append(value)\n                elif len(value) == 40:\n                    iocs['hash_sha1'].append(value)\n                elif len(value) == 64:\n                    iocs['hash_sha256'].append(value)\n    elif 'ioc' in input_data:\n        raw = input_data['ioc']\n    else:\n        raw = str(input_data)\nelse:\n    raw = str(input_data)\n\n# Extract IOCs from raw text\nif 'raw' in dir():\n    # IPv4\n    iocs['ip'].extend(re.findall(r'\\b(?:\\d{1,3}\\.){3}\\d{1,3}\\b', raw))\n    # Domains\n    iocs['domain'].extend(re.findall(r'\\b[a-zA-Z0-9][a-zA-Z0-9-]{1,61}[a-zA-Z0-9]\\.[a-zA-Z]{2,}\\b', raw))\n    # URLs\n    iocs['url'].extend(re.findall(r'https?://[^\\s<>\"]+', raw))\n    # MD5\n    iocs['hash_md5'].extend(re.findall(r'\\b[a-fA-F0-9]{32}\\b', raw))\n    # SHA1\n    iocs['hash_sha1'].extend(re.findall(r'\\b[a-fA-F0-9]{40}\\b', raw))\n    # SHA256\n    iocs['hash_sha256'].extend(re.findall(r'\\b[a-fA-F0-9]{64}\\b', raw))\n    # Email\n    iocs['email'].extend(re.findall(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}', raw))\n\n# Deduplicate\nfor key in iocs:\n    iocs[key] = list(set(iocs[key]))\n\n# Filter private IPs\nprivate_ranges = ['10.', '172.16.', '172.17.', '172.18.', '172.19.', '172.20.', '172.21.', '172.22.', '172.23.', '172.24.', '172.25.', '172.26.', '172.27.', '172.28.', '172.29.', '172.30.', '172.31.', '192.168.', '127.']\niocs['ip'] = [ip for ip in iocs['ip'] if not any(ip.startswith(p) for p in private_ranges)]\n\nresult = {\n    'iocs': iocs,\n    'total_count': sum(len(v) for v in iocs.values()),\n    'has_ips': len(iocs['ip']) > 0,\n    'has_domains': len(iocs['domain']) > 0,\n    'has_urls': len(iocs['url']) > 0,\n    'has_hashes': len(iocs['hash_md5']) + len(iocs['hash_sha256']) + len(iocs['hash_sha1']) > 0\n}\nprint(json.dumps(result))"
+      },
+      "position": 1
+    },
+    {
+      "id": "action_2",
+      "name": "Enrich IPs - VirusTotal",
+      "app_name": "VirusTotal",
+      "app_action": "get_ip_report",
+      "parameters": {
+        "ip_addresses": "$action_1.iocs.ip"
+      },
+      "position": 2,
+      "condition": "$action_1.has_ips",
+      "loop": true,
+      "loop_variable": "$action_1.iocs.ip"
+    },
+    {
+      "id": "action_3",
+      "name": "Enrich IPs - AbuseIPDB",
+      "app_name": "AbuseIPDB",
+      "app_action": "check_ip",
+      "parameters": {
+        "ip_addresses": "$action_1.iocs.ip",
+        "max_age_days": 90,
+        "verbose": true
+      },
+      "position": 2,
+      "condition": "$action_1.has_ips"
+    },
+    {
+      "id": "action_4",
+      "name": "Enrich IPs - Shodan",
+      "app_name": "Shodan",
+      "app_action": "host_lookup",
+      "parameters": {
+        "ip_addresses": "$action_1.iocs.ip"
+      },
+      "position": 2,
+      "condition": "$action_1.has_ips"
+    },
+    {
+      "id": "action_5",
+      "name": "Enrich IPs - GreyNoise",
+      "app_name": "GreyNoise",
+      "app_action": "ip_lookup",
+      "parameters": {
+        "ip_addresses": "$action_1.iocs.ip"
+      },
+      "position": 2,
+      "condition": "$action_1.has_ips"
+    },
+    {
+      "id": "action_6",
+      "name": "Enrich Domains - VirusTotal",
+      "app_name": "VirusTotal",
+      "app_action": "get_domain_report",
+      "parameters": {
+        "domains": "$action_1.iocs.domain"
+      },
+      "position": 2,
+      "condition": "$action_1.has_domains",
+      "loop": true,
+      "loop_variable": "$action_1.iocs.domain"
+    },
+    {
+      "id": "action_7",
+      "name": "Enrich Domains - WHOIS",
+      "app_name": "WHOIS",
+      "app_action": "lookup",
+      "parameters": {
+        "domains": "$action_1.iocs.domain"
+      },
+      "position": 2,
+      "condition": "$action_1.has_domains"
+    },
+    {
+      "id": "action_8",
+      "name": "Enrich Domains - PassiveTotal",
+      "app_name": "PassiveTotal",
+      "app_action": "get_passive_dns",
+      "parameters": {
+        "domains": "$action_1.iocs.domain"
+      },
+      "position": 2,
+      "condition": "$action_1.has_domains"
+    },
+    {
+      "id": "action_9",
+      "name": "Enrich URLs - VirusTotal",
+      "app_name": "VirusTotal",
+      "app_action": "scan_url",
+      "parameters": {
+        "urls": "$action_1.iocs.url"
+      },
+      "position": 2,
+      "condition": "$action_1.has_urls",
+      "loop": true,
+      "loop_variable": "$action_1.iocs.url"
+    },
+    {
+      "id": "action_10",
+      "name": "Enrich URLs - URLScan",
+      "app_name": "URLScan",
+      "app_action": "scan_url",
+      "parameters": {
+        "urls": "$action_1.iocs.url",
+        "visibility": "private"
+      },
+      "position": 2,
+      "condition": "$action_1.has_urls"
+    },
+    {
+      "id": "action_11",
+      "name": "Enrich Hashes - VirusTotal",
+      "app_name": "VirusTotal",
+      "app_action": "get_file_report",
+      "parameters": {
+        "hashes": "$action_1.iocs.hash_sha256 + $action_1.iocs.hash_md5 + $action_1.iocs.hash_sha1"
+      },
+      "position": 2,
+      "condition": "$action_1.has_hashes",
+      "loop": true
+    },
+    {
+      "id": "action_12",
+      "name": "Enrich Hashes - MalwareBazaar",
+      "app_name": "MalwareBazaar",
+      "app_action": "query_hash",
+      "parameters": {
+        "hashes": "$action_1.iocs.hash_sha256 + $action_1.iocs.hash_md5"
+      },
+      "position": 2,
+      "condition": "$action_1.has_hashes"
+    },
+    {
+      "id": "action_13",
+      "name": "Query MISP",
+      "app_name": "MISP",
+      "app_action": "search_attribute",
+      "parameters": {
+        "values": "$action_1.iocs.ip + $action_1.iocs.domain + $action_1.iocs.hash_sha256"
+      },
+      "position": 3
+    },
+    {
+      "id": "action_14",
+      "name": "Aggregate Results",
+      "app_name": "Shuffle Tools",
+      "app_action": "execute_python",
+      "parameters": {
+        "code": "import json\n\ndef aggregate_enrichment(iocs, vt_ip, abuse_ip, shodan, greynoise, vt_domain, whois, passivetotal, vt_url, urlscan, vt_hash, malwarebazaar, misp):\n    results = []\n    \n    # Process IPs\n    for ip in iocs.get('ip', []):\n        ip_result = {\n            'ioc': ip,\n            'type': 'ip',\n            'risk_score': 0,\n            'malicious': False,\n            'sources': {},\n            'tags': [],\n            'context': {}\n        }\n        \n        # VirusTotal\n        if vt_ip:\n            vt_data = next((r for r in vt_ip if r.get('ip') == ip), {})\n            ip_result['sources']['virustotal'] = vt_data\n            malicious = vt_data.get('malicious', 0)\n            if malicious > 0:\n                ip_result['risk_score'] += min(malicious * 5, 50)\n                ip_result['tags'].append('vt-malicious')\n        \n        # AbuseIPDB\n        if abuse_ip:\n            abuse_data = next((r for r in abuse_ip if r.get('ip') == ip), {})\n            ip_result['sources']['abuseipdb'] = abuse_data\n            confidence = abuse_data.get('abuseConfidenceScore', 0)\n            if confidence > 50:\n                ip_result['risk_score'] += confidence // 2\n                ip_result['tags'].append('abuse-reported')\n        \n        # Shodan\n        if shodan:\n            shodan_data = next((r for r in shodan if r.get('ip') == ip), {})\n            ip_result['sources']['shodan'] = shodan_data\n            ip_result['context']['ports'] = shodan_data.get('ports', [])\n            ip_result['context']['country'] = shodan_data.get('country_code')\n        \n        # GreyNoise\n        if greynoise:\n            gn_data = next((r for r in greynoise if r.get('ip') == ip), {})\n            ip_result['sources']['greynoise'] = gn_data\n            if gn_data.get('classification') == 'malicious':\n                ip_result['risk_score'] += 30\n                ip_result['tags'].append('greynoise-malicious')\n        \n        ip_result['malicious'] = ip_result['risk_score'] >= 50\n        results.append(ip_result)\n    \n    # Process Domains\n    for domain in iocs.get('domain', []):\n        domain_result = {\n            'ioc': domain,\n            'type': 'domain',\n            'risk_score': 0,\n            'malicious': False,\n            'sources': {},\n            'tags': [],\n            'context': {}\n        }\n        \n        if vt_domain:\n            vt_data = next((r for r in vt_domain if r.get('domain') == domain), {})\n            domain_result['sources']['virustotal'] = vt_data\n            malicious = vt_data.get('malicious', 0)\n            if malicious > 0:\n                domain_result['risk_score'] += min(malicious * 5, 50)\n        \n        if whois:\n            whois_data = next((r for r in whois if domain in r.get('domain', '')), {})\n            domain_result['sources']['whois'] = whois_data\n            domain_result['context']['registrar'] = whois_data.get('registrar')\n            domain_result['context']['creation_date'] = whois_data.get('creation_date')\n        \n        domain_result['malicious'] = domain_result['risk_score'] >= 40\n        results.append(domain_result)\n    \n    # Process Hashes\n    all_hashes = iocs.get('hash_sha256', []) + iocs.get('hash_md5', []) + iocs.get('hash_sha1', [])\n    for file_hash in all_hashes:\n        hash_result = {\n            'ioc': file_hash,\n            'type': 'hash',\n            'risk_score': 0,\n            'malicious': False,\n            'sources': {},\n            'tags': [],\n            'context': {}\n        }\n        \n        if vt_hash:\n            vt_data = next((r for r in vt_hash if file_hash in [r.get('sha256'), r.get('md5'), r.get('sha1')]), {})\n            hash_result['sources']['virustotal'] = vt_data\n            malicious = vt_data.get('malicious', 0)\n            if malicious > 5:\n                hash_result['risk_score'] += min(malicious * 3, 70)\n                hash_result['tags'].append('malware')\n        \n        if malwarebazaar:\n            mb_data = next((r for r in malwarebazaar if file_hash in [r.get('sha256'), r.get('md5')]), {})\n            hash_result['sources']['malwarebazaar'] = mb_data\n            if mb_data:\n                hash_result['risk_score'] += 40\n                hash_result['context']['malware_family'] = mb_data.get('signature')\n        \n        hash_result['malicious'] = hash_result['risk_score'] >= 50\n        results.append(hash_result)\n    \n    # Summary\n    summary = {\n        'total_iocs': len(results),\n        'malicious_count': sum(1 for r in results if r['malicious']),\n        'by_type': {\n            'ip': len([r for r in results if r['type'] == 'ip']),\n            'domain': len([r for r in results if r['type'] == 'domain']),\n            'hash': len([r for r in results if r['type'] == 'hash'])\n        }\n    }\n    \n    return {'results': results, 'summary': summary}\n\noutput = aggregate_enrichment(\n    $action_1.iocs,\n    $action_2.result if $action_2 else None,\n    $action_3.result if $action_3 else None,\n    $action_4.result if $action_4 else None,\n    $action_5.result if $action_5 else None,\n    $action_6.result if $action_6 else None,\n    $action_7.result if $action_7 else None,\n    $action_8.result if $action_8 else None,\n    $action_9.result if $action_9 else None,\n    $action_10.result if $action_10 else None,\n    $action_11.result if $action_11 else None,\n    $action_12.result if $action_12 else None,\n    $action_13.result if $action_13 else None\n)\nprint(json.dumps(output))"
+      },
+      "position": 4
+    },
+    {
+      "id": "action_15",
+      "name": "Update TheHive Observables",
+      "app_name": "TheHive",
+      "app_action": "update_observable",
+      "parameters": {
+        "case_id": "$trigger.case_id",
+        "updates": "$action_14.results"
+      },
+      "position": 5,
+      "condition": "$trigger.case_id"
+    },
+    {
+      "id": "action_16",
+      "name": "Export to MISP",
+      "app_name": "MISP",
+      "app_action": "add_attributes",
+      "parameters": {
+        "event_id": "$trigger.misp_event_id || 'auto'",
+        "attributes": "$action_14.results.filter(r => r.malicious)"
+      },
+      "position": 5,
+      "condition": "$action_14.summary.malicious_count > 0"
+    },
+    {
+      "id": "action_17",
+      "name": "Return Enrichment Results",
+      "app_name": "Shuffle Tools",
+      "app_action": "set_workflow_result",
+      "parameters": {
+        "result": "$action_14"
+      },
+      "position": 6
+    }
+  ],
+  "variables": {
+    "vt_api_key": "${VIRUSTOTAL_API_KEY}",
+    "abuseipdb_api_key": "${ABUSEIPDB_API_KEY}",
+    "shodan_api_key": "${SHODAN_API_KEY}",
+    "greynoise_api_key": "${GREYNOISE_API_KEY}",
+    "passivetotal_api_key": "${PASSIVETOTAL_API_KEY}",
+    "urlscan_api_key": "${URLSCAN_API_KEY}",
+    "malwarebazaar_api_key": "${MALWAREBAZAAR_API_KEY}"
+  },
+  "rate_limiting": {
+    "global": {
+      "requests_per_minute": 60
+    },
+    "per_service": {
+      "virustotal": {
+        "requests_per_minute": 4
+      },
+      "abuseipdb": {
+        "requests_per_day": 1000
+      }
+    }
+  },
+  "error_handling": {
+    "on_failure": "continue",
+    "retry_count": 2,
+    "retry_delay": 30
+  }
+}

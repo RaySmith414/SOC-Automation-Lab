@@ -1,0 +1,80 @@
+{
+  "name": "Phishing Investigation",
+  "displayName": "Phishing Email Investigation",
+  "titlePrefix": "[PHISHING]",
+  "description": "Template for investigating reported phishing emails and campaigns",
+  "severity": 2,
+  "tags": ["phishing", "email", "social-engineering"],
+  "flag": false,
+  "tlp": 2,
+  "pap": 2,
+  "customFields": {
+    "attack-vector": {
+      "string": "Phishing"
+    },
+    "mitre-tactics": {
+      "string": "Initial Access"
+    }
+  },
+  "tasks": [
+    {
+      "order": 1,
+      "title": "Email Analysis",
+      "group": "Investigation",
+      "description": "## Email Header & Content Analysis\n\n- [ ] Collect original email with headers\n- [ ] Analyze email headers (SPF, DKIM, DMARC)\n- [ ] Extract sender information\n- [ ] Review email content and formatting\n- [ ] Identify social engineering techniques\n- [ ] Document suspicious elements"
+    },
+    {
+      "order": 2,
+      "title": "URL Analysis",
+      "group": "Investigation",
+      "description": "## URL Analysis\n\n- [ ] Extract all URLs from email\n- [ ] Defang URLs for safe handling\n- [ ] Submit to URL scanning services\n- [ ] Analyze landing pages (sandbox)\n- [ ] Check domain registration/WHOIS\n- [ ] Identify credential harvesting pages"
+    },
+    {
+      "order": 3,
+      "title": "Attachment Analysis",
+      "group": "Investigation",
+      "description": "## Attachment Analysis\n\n- [ ] Safely extract attachments\n- [ ] Calculate file hashes\n- [ ] Submit to malware sandboxes\n- [ ] Perform static analysis\n- [ ] Document malware capabilities\n- [ ] Extract IOCs from attachments"
+    },
+    {
+      "order": 4,
+      "title": "Impact Assessment",
+      "group": "Investigation",
+      "description": "## Determine Impact\n\n- [ ] Identify all recipients\n- [ ] Determine who clicked links\n- [ ] Identify credential submissions\n- [ ] Check for malware execution\n- [ ] Assess data exposure risk\n- [ ] Document affected users"
+    },
+    {
+      "order": 5,
+      "title": "Containment",
+      "group": "Containment",
+      "description": "## Containment Actions\n\n- [ ] Block sender address/domain\n- [ ] Block malicious URLs at proxy\n- [ ] Remove emails from all mailboxes\n- [ ] Reset compromised credentials\n- [ ] Block attachment hashes\n- [ ] Disable compromised accounts"
+    },
+    {
+      "order": 6,
+      "title": "User Notification",
+      "group": "Communication",
+      "description": "## User Communication\n\n- [ ] Notify affected users\n- [ ] Provide guidance on actions taken\n- [ ] Issue password reset if needed\n- [ ] Document user interactions\n- [ ] Provide phishing awareness tips"
+    },
+    {
+      "order": 7,
+      "title": "Threat Intelligence",
+      "group": "Intelligence",
+      "description": "## Threat Intel Activities\n\n- [ ] Search for related campaigns\n- [ ] Check threat intel feeds\n- [ ] Identify threat actor (if possible)\n- [ ] Document campaign indicators\n- [ ] Update internal threat intel"
+    },
+    {
+      "order": 8,
+      "title": "Remediation & Closure",
+      "group": "Closure",
+      "description": "## Remediation & Closure\n\n- [ ] Verify all containment actions\n- [ ] Update email filtering rules\n- [ ] Add IOCs to blocklists\n- [ ] Complete incident documentation\n- [ ] Consider user awareness training\n- [ ] Share IOCs if appropriate"
+    }
+  ],
+  "metrics": {
+    "usersAffected": {
+      "description": "Number of users who received the phishing email"
+    },
+    "usersClicked": {
+      "description": "Number of users who clicked the phishing link"
+    },
+    "credentialsCompromised": {
+      "description": "Number of credentials potentially compromised"
+    }
+  }
+}

@@ -1,0 +1,244 @@
+{
+  "name": "Phishing Response Workflow",
+  "description": "Automated phishing email analysis and response workflow",
+  "version": "1.0",
+  "author": "SOC Automation Lab",
+  "triggers": [
+    {
+      "id": "trigger_1",
+      "name": "Phishing Report Webhook",
+      "type": "webhook",
+      "description": "Receives phishing reports from users or email gateway",
+      "parameters": {
+        "authentication": "api_key",
+        "method": "POST"
+      }
+    },
+    {
+      "id": "trigger_2",
+      "name": "Email Submission",
+      "type": "email",
+      "description": "Direct email submission to phishing inbox",
+      "parameters": {
+        "mailbox": "phishing@company.com",
+        "poll_interval": 60
+      }
+    }
+  ],
+  "actions": [
+    {
+      "id": "action_1",
+      "name": "Parse Email",
+      "app_name": "Email Parser",
+      "app_action": "parse_email",
+      "parameters": {
+        "email_content": "$trigger.body",
+        "extract_attachments": true,
+        "extract_headers": true
+      },
+      "position": 1
+    },
+    {
+      "id": "action_2",
+      "name": "Extract URLs",
+      "app_name": "Shuffle Tools",
+      "app_action": "regex_extract",
+      "parameters": {
+        "input": "$action_1.body",
+        "pattern": "https?://[^\\s<>\"']+",
+        "unique": true
+      },
+      "position": 2
+    },
+    {
+      "id": "action_3",
+      "name": "Extract Sender Info",
+      "app_name": "Shuffle Tools",
+      "app_action": "execute_python",
+      "parameters": {
+        "code": "import re\nheaders = $action_1.headers\nsender = headers.get('From', '')\nreply_to = headers.get('Reply-To', '')\nreturn_path = headers.get('Return-Path', '')\nreceived = headers.get('Received', [])\n\n# Extract domains\nsender_domain = re.search(r'@([\\w.-]+)', sender)\nreply_domain = re.search(r'@([\\w.-]+)', reply_to) if reply_to else None\n\nresult = {\n    'sender_email': sender,\n    'sender_domain': sender_domain.group(1) if sender_domain else None,\n    'reply_to': reply_to,\n    'reply_domain': reply_domain.group(1) if reply_domain else None,\n    'return_path': return_path,\n    'received_chain': received,\n    'suspicious_indicators': []\n}\n\n# Check for suspicious indicators\nif sender_domain and reply_domain and sender_domain.group(1) != reply_domain.group(1):\n    result['suspicious_indicators'].append('Reply-To domain mismatch')\n\nprint(json.dumps(result))"
+      },
+      "position": 2
+    },
+    {
+      "id": "action_4",
+      "name": "Scan URLs with URLScan",
+      "app_name": "URLScan",
+      "app_action": "scan_url",
+      "parameters": {
+        "urls": "$action_2.result",
+        "visibility": "private"
+      },
+      "position": 3,
+      "condition": "$action_2.result.length > 0",
+      "loop": true
+    },
+    {
+      "id": "action_5",
+      "name": "Check URLs in VirusTotal",
+      "app_name": "VirusTotal",
+      "app_action": "scan_url",
+      "parameters": {
+        "urls": "$action_2.result"
+      },
+      "position": 3,
+      "condition": "$action_2.result.length > 0"
+    },
+    {
+      "id": "action_6",
+      "name": "Analyze Attachments",
+      "app_name": "VirusTotal",
+      "app_action": "scan_file",
+      "parameters": {
+        "files": "$action_1.attachments"
+      },
+      "position": 3,
+      "condition": "$action_1.attachments.length > 0",
+      "loop": true
+    },
+    {
+      "id": "action_7",
+      "name": "Submit to Sandbox",
+      "app_name": "Any.Run",
+      "app_action": "submit_file",
+      "parameters": {
+        "file": "$action_1.attachments[0]",
+        "os": "windows10",
+        "timeout": 120
+      },
+      "position": 3,
+      "condition": "$action_1.attachments.length > 0 && $action_1.attachments[0].size < 50000000"
+    },
+    {
+      "id": "action_8",
+      "name": "Check Sender Domain",
+      "app_name": "Shuffle Tools",
+      "app_action": "execute_python",
+      "parameters": {
+        "code": "import dns.resolver\nimport json\n\ndomain = '$action_3.sender_domain'\nresult = {'domain': domain, 'spf': None, 'dkim': None, 'dmarc': None, 'suspicious': False}\n\ntry:\n    # Check SPF\n    spf_records = dns.resolver.resolve(domain, 'TXT')\n    for record in spf_records:\n        if 'v=spf1' in str(record):\n            result['spf'] = str(record)\n            break\nexcept:\n    result['spf'] = 'Not found'\n    result['suspicious'] = True\n\ntry:\n    # Check DMARC\n    dmarc_records = dns.resolver.resolve(f'_dmarc.{domain}', 'TXT')\n    for record in dmarc_records:\n        if 'v=DMARC1' in str(record):\n            result['dmarc'] = str(record)\n            break\nexcept:\n    result['dmarc'] = 'Not found'\n\nprint(json.dumps(result))"
+      },
+      "position": 4
+    },
+    {
+      "id": "action_9",
+      "name": "Calculate Phishing Score",
+      "app_name": "Shuffle Tools",
+      "app_action": "execute_python",
+      "parameters": {
+        "code": "import json\n\ndef calculate_phishing_score(email_analysis, url_results, attachment_results, domain_check, sender_info):\n    score = 0\n    indicators = []\n    \n    # URL analysis\n    if url_results:\n        for url_result in url_results:\n            if url_result.get('malicious', 0) > 0:\n                score += 30\n                indicators.append(f\"Malicious URL detected: {url_result.get('url', 'unknown')}\")\n            if url_result.get('suspicious', 0) > 5:\n                score += 15\n                indicators.append(f\"Suspicious URL: {url_result.get('url', 'unknown')}\")\n    \n    # Attachment analysis\n    if attachment_results:\n        for att_result in attachment_results:\n            if att_result.get('malicious', 0) > 5:\n                score += 50\n                indicators.append(f\"Malicious attachment: {att_result.get('filename', 'unknown')}\")\n    \n    # Domain reputation\n    if domain_check.get('suspicious'):\n        score += 20\n        indicators.append('Sender domain lacks proper email authentication')\n    \n    # Sender indicators\n    for indicator in sender_info.get('suspicious_indicators', []):\n        score += 15\n        indicators.append(indicator)\n    \n    # Determine verdict\n    if score >= 70:\n        verdict = 'malicious'\n        action = 'block_and_remediate'\n    elif score >= 40:\n        verdict = 'suspicious'\n        action = 'quarantine_and_investigate'\n    else:\n        verdict = 'clean'\n        action = 'release'\n    \n    return {\n        'score': score,\n        'verdict': verdict,\n        'recommended_action': action,\n        'indicators': indicators\n    }\n\nresult = calculate_phishing_score(\n    $action_1.result,\n    $action_5.result if $action_5 else [],\n    $action_6.result if $action_6 else [],\n    $action_8.result if $action_8 else {},\n    $action_3.result\n)\nprint(json.dumps(result))"
+      },
+      "position": 5
+    },
+    {
+      "id": "action_10",
+      "name": "Create TheHive Case",
+      "app_name": "TheHive",
+      "app_action": "create_case",
+      "parameters": {
+        "title": "Phishing Investigation: $action_1.subject",
+        "description": "## Phishing Email Analysis\\n\\n**Subject:** $action_1.subject\\n**From:** $action_3.sender_email\\n**Received:** $action_1.date\\n\\n### Analysis Results\\n**Verdict:** $action_9.verdict\\n**Score:** $action_9.score\\n\\n### Indicators\\n$action_9.indicators\\n\\n### URLs Found\\n$action_2.result\\n\\n### Attachments\\n$action_1.attachments",
+        "severity": "$action_9.verdict == 'malicious' ? 3 : $action_9.verdict == 'suspicious' ? 2 : 1",
+        "tags": ["phishing", "$action_9.verdict", "automated"],
+        "template": "phishing-investigation",
+        "customFields": {
+          "sender-domain": "$action_3.sender_domain",
+          "url-count": "$action_2.result.length",
+          "attachment-count": "$action_1.attachments.length"
+        }
+      },
+      "position": 6
+    },
+    {
+      "id": "action_11",
+      "name": "Add Observables to Case",
+      "app_name": "TheHive",
+      "app_action": "create_observable",
+      "parameters": {
+        "case_id": "$action_10.id",
+        "observables": [
+          {
+            "dataType": "mail",
+            "data": "$action_3.sender_email",
+            "tags": ["sender"]
+          },
+          {
+            "dataType": "domain",
+            "data": "$action_3.sender_domain",
+            "tags": ["sender-domain"]
+          }
+        ]
+      },
+      "position": 7
+    },
+    {
+      "id": "action_12",
+      "name": "Block Malicious Sender",
+      "app_name": "Exchange",
+      "app_action": "block_sender",
+      "parameters": {
+        "sender": "$action_3.sender_email",
+        "scope": "organization"
+      },
+      "position": 8,
+      "condition": "$action_9.verdict == 'malicious'"
+    },
+    {
+      "id": "action_13",
+      "name": "Search for Similar Emails",
+      "app_name": "Exchange",
+      "app_action": "search_messages",
+      "parameters": {
+        "query": "from:$action_3.sender_email OR subject:$action_1.subject",
+        "date_range": "7d"
+      },
+      "position": 8,
+      "condition": "$action_9.verdict == 'malicious'"
+    },
+    {
+      "id": "action_14",
+      "name": "Delete Similar Emails",
+      "app_name": "Exchange",
+      "app_action": "delete_messages",
+      "parameters": {
+        "message_ids": "$action_13.message_ids",
+        "soft_delete": true
+      },
+      "position": 9,
+      "condition": "$action_13.message_ids.length > 0"
+    },
+    {
+      "id": "action_15",
+      "name": "Notify SOC Team",
+      "app_name": "Slack",
+      "app_action": "send_message",
+      "parameters": {
+        "channel": "#soc-phishing",
+        "message": ":fishing_pole_and_fish: *Phishing Analysis Complete*\\n\\n*Subject:* $action_1.subject\\n*Verdict:* $action_9.verdict\\n*Score:* $action_9.score\\n*Action Taken:* $action_9.recommended_action\\n\\n*Case:* $action_10.caseUrl"
+      },
+      "position": 10
+    },
+    {
+      "id": "action_16",
+      "name": "Send User Notification",
+      "app_name": "Email",
+      "app_action": "send_email",
+      "parameters": {
+        "to": "$trigger.reporter_email",
+        "subject": "Phishing Report Analysis Complete",
+        "body": "Thank you for reporting the suspicious email.\\n\\nOur analysis has determined the email is: $action_9.verdict\\n\\nAppropriate actions have been taken to protect the organization.\\n\\nCase Reference: $action_10.id"
+      },
+      "position": 10,
+      "condition": "$trigger.reporter_email"
+    }
+  ],
+  "variables": {
+    "exchange_credentials": "${EXCHANGE_CREDENTIALS}",
+    "urlscan_api_key": "${URLSCAN_API_KEY}",
+    "anyrun_api_key": "${ANYRUN_API_KEY}"
+  },
+  "error_handling": {
+    "on_failure": "continue",
+    "retry_count": 2,
+    "retry_delay": 10
+  }
+}

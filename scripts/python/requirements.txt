@@ -1,0 +1,48 @@
+# SOC Automation Lab - Python Requirements
+
+# HTTP Client
+requests>=2.31.0
+urllib3>=2.0.0
+
+# JSON/Data handling
+python-dateutil>=2.8.0
+
+# Async support (optional)
+aiohttp>=3.9.0
+asyncio>=3.4.3
+
+# DNS lookups
+dnspython>=2.4.0
+
+# File type detection
+python-magic>=0.4.27
+
+# STIX/TAXII support
+stix2>=3.0.0
+taxii2-client>=2.3.0
+
+# TheHive integration
+thehive4py>=1.8.1
+
+# Cortex integration
+cortex4py>=2.0.1
+
+# MISP integration
+pymisp>=2.4.176
+
+# Email parsing
+mail-parser>=3.15.0
+
+# YARA support (optional - requires yara library)
+# yara-python>=4.3.0
+
+# Logging and monitoring
+python-json-logger>=2.0.0
+
+# CLI tools
+argparse>=1.4.0
+colorama>=0.4.6
+
+# Testing
+pytest>=7.4.0
+pytest-cov>=4.1.0

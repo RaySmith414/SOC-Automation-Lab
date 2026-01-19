@@ -1,0 +1,163 @@
+{
+  "name": "Alert Triage Workflow",
+  "description": "Automated alert triage with enrichment and severity classification",
+  "version": "1.0",
+  "author": "SOC Automation Lab",
+  "triggers": [
+    {
+      "id": "trigger_1",
+      "name": "Wazuh Alert Webhook",
+      "type": "webhook",
+      "description": "Receives alerts from Wazuh manager",
+      "parameters": {
+        "authentication": "api_key",
+        "method": "POST"
+      }
+    }
+  ],
+  "actions": [
+    {
+      "id": "action_1",
+      "name": "Parse Alert Data",
+      "app_name": "Shuffle Tools",
+      "app_action": "parse_json",
+      "parameters": {
+        "input": "$trigger_1.body"
+      },
+      "position": 1
+    },
+    {
+      "id": "action_2",
+      "name": "Extract IOCs",
+      "app_name": "Shuffle Tools",
+      "app_action": "regex_extract",
+      "parameters": {
+        "input": "$action_1.result",
+        "patterns": {
+          "ipv4": "\\b(?:\\d{1,3}\\.){3}\\d{1,3}\\b",
+          "domain": "\\b[a-zA-Z0-9][a-zA-Z0-9-]{1,61}[a-zA-Z0-9]\\.[a-zA-Z]{2,}\\b",
+          "md5": "\\b[a-fA-F0-9]{32}\\b",
+          "sha256": "\\b[a-fA-F0-9]{64}\\b",
+          "url": "https?://[^\\s]+"
+        }
+      },
+      "position": 2
+    },
+    {
+      "id": "action_3",
+      "name": "Enrich IP Addresses",
+      "app_name": "VirusTotal",
+      "app_action": "get_ip_report",
+      "parameters": {
+        "ip_addresses": "$action_2.ipv4",
+        "api_key": "$workflow.vt_api_key"
+      },
+      "position": 3,
+      "condition": "$action_2.ipv4.length > 0"
+    },
+    {
+      "id": "action_4",
+      "name": "Check AbuseIPDB",
+      "app_name": "AbuseIPDB",
+      "app_action": "check_ip",
+      "parameters": {
+        "ip_addresses": "$action_2.ipv4",
+        "max_age_days": 90
+      },
+      "position": 3,
+      "condition": "$action_2.ipv4.length > 0"
+    },
+    {
+      "id": "action_5",
+      "name": "Enrich Domains",
+      "app_name": "VirusTotal",
+      "app_action": "get_domain_report",
+      "parameters": {
+        "domains": "$action_2.domain"
+      },
+      "position": 3,
+      "condition": "$action_2.domain.length > 0"
+    },
+    {
+      "id": "action_6",
+      "name": "Check File Hashes",
+      "app_name": "VirusTotal",
+      "app_action": "get_file_report",
+      "parameters": {
+        "hashes": "$action_2.sha256 + $action_2.md5"
+      },
+      "position": 3,
+      "condition": "$action_2.sha256.length > 0 || $action_2.md5.length > 0"
+    },
+    {
+      "id": "action_7",
+      "name": "Calculate Risk Score",
+      "app_name": "Shuffle Tools",
+      "app_action": "execute_python",
+      "parameters": {
+        "code": "import json\n\ndef calculate_risk(vt_ip, abuseipdb, vt_domain, vt_hash, original_alert):\n    score = 0\n    reasons = []\n    \n    # Base score from original alert severity\n    alert_level = original_alert.get('rule', {}).get('level', 0)\n    score += alert_level * 5\n    \n    # VirusTotal IP analysis\n    if vt_ip:\n        malicious = vt_ip.get('malicious', 0)\n        if malicious > 0:\n            score += malicious * 10\n            reasons.append(f'IP flagged by {malicious} VT engines')\n    \n    # AbuseIPDB analysis\n    if abuseipdb:\n        abuse_score = abuseipdb.get('abuseConfidenceScore', 0)\n        if abuse_score > 50:\n            score += abuse_score // 2\n            reasons.append(f'AbuseIPDB confidence: {abuse_score}%')\n    \n    # Domain analysis\n    if vt_domain:\n        malicious = vt_domain.get('malicious', 0)\n        if malicious > 0:\n            score += malicious * 15\n            reasons.append(f'Domain flagged by {malicious} VT engines')\n    \n    # File hash analysis\n    if vt_hash:\n        malicious = vt_hash.get('malicious', 0)\n        if malicious > 5:\n            score += 50\n            reasons.append(f'File flagged by {malicious} VT engines')\n    \n    # Determine severity\n    if score >= 100:\n        severity = 'critical'\n    elif score >= 70:\n        severity = 'high'\n    elif score >= 40:\n        severity = 'medium'\n    else:\n        severity = 'low'\n    \n    return {\n        'score': score,\n        'severity': severity,\n        'reasons': reasons,\n        'auto_escalate': score >= 70\n    }\n\nresult = calculate_risk(\n    $action_3.result if $action_3 else None,\n    $action_4.result if $action_4 else None,\n    $action_5.result if $action_5 else None,\n    $action_6.result if $action_6 else None,\n    $action_1.result\n)\nprint(json.dumps(result))"
+      },
+      "position": 4
+    },
+    {
+      "id": "action_8",
+      "name": "Create TheHive Alert",
+      "app_name": "TheHive",
+      "app_action": "create_alert",
+      "parameters": {
+        "title": "Triaged Alert: $action_1.result.rule.description",
+        "description": "Auto-triaged alert from Wazuh\n\n**Risk Score:** $action_7.score\n**Severity:** $action_7.severity\n**Reasons:**\n$action_7.reasons",
+        "severity": "$action_7.severity",
+        "source": "Wazuh",
+        "sourceRef": "$action_1.result.id",
+        "type": "wazuh_alert",
+        "tags": ["auto-triaged", "$action_7.severity"],
+        "observables": "$action_2"
+      },
+      "position": 5
+    },
+    {
+      "id": "action_9",
+      "name": "Escalate High Severity",
+      "app_name": "Slack",
+      "app_action": "send_message",
+      "parameters": {
+        "channel": "#soc-alerts",
+        "message": ":rotating_light: *HIGH SEVERITY ALERT*\n\n*Title:* $action_1.result.rule.description\n*Risk Score:* $action_7.score\n*Severity:* $action_7.severity\n\n*Reasons:*\n$action_7.reasons\n\n*TheHive Case:* $action_8.caseUrl"
+      },
+      "position": 6,
+      "condition": "$action_7.auto_escalate == true"
+    },
+    {
+      "id": "action_10",
+      "name": "Update Metrics",
+      "app_name": "HTTP",
+      "app_action": "post",
+      "parameters": {
+        "url": "http://metrics-collector:8080/api/metrics",
+        "body": {
+          "workflow": "alert-triage",
+          "alert_id": "$action_1.result.id",
+          "severity": "$action_7.severity",
+          "score": "$action_7.score",
+          "timestamp": "$workflow.start_time"
+        }
+      },
+      "position": 7
+    }
+  ],
+  "variables": {
+    "vt_api_key": "${VIRUSTOTAL_API_KEY}",
+    "thehive_api_key": "${THEHIVE_API_KEY}",
+    "slack_webhook": "${SLACK_WEBHOOK_URL}"
+  },
+  "error_handling": {
+    "on_failure": "continue",
+    "retry_count": 3,
+    "retry_delay": 5,
+    "notification": {
+      "type": "email",
+      "recipients": ["soc-team@company.com"]
+    }
+  }
+}
