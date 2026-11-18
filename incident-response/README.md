@@ -1,10 +1,10 @@
 # Incident Response Playbooks and Procedures
 
-Comprehensive incident response documentation for Security Operations Center (SOC) analysts.
+Incident response playbooks for Security Operations Center (SOC) analysts.
 
 ## Overview
 
-This directory contains standardized playbooks, runbooks, and templates for responding to security incidents. All procedures follow the NIST Incident Response Framework phases:
+This directory holds playbooks for three incident types. Each one follows the phases of the NIST incident response life cycle:
 
 1. **Preparation**
 2. **Detection & Analysis**
@@ -47,39 +47,19 @@ This directory contains standardized playbooks, runbooks, and templates for resp
 |----------|----------|---------|---------------|
 | [Malware Infection](playbooks/malware-infection.md) | High | EDR/AV alert | Full response procedure |
 | [Phishing Attack](playbooks/phishing-attack.md) | Medium-High | User report/Gateway alert | Email investigation |
-| [Data Breach](playbooks/data-breach.md) | Critical | DLP/SIEM alert | Exfiltration response |
 | [Ransomware](playbooks/ransomware.md) | Critical | Encryption detected | Emergency response |
-| [Insider Threat](playbooks/insider-threat.md) | High | UEBA/HR referral | Internal investigation |
-| [DDoS Attack](playbooks/ddos-attack.md) | High | Network monitoring | Availability incident |
 
 ### Use Case Matrix
 
-| Scenario | Primary Playbook | Secondary Playbooks |
-|----------|------------------|---------------------|
-| Crypto-mining malware | Malware Infection | Network Intrusion |
-| Business Email Compromise | Phishing Attack | Insider Threat |
-| Supply chain compromise | Malware Infection | Data Breach |
-| Credential stuffing | Account Compromise | Data Breach |
-| APT intrusion | Network Intrusion | Data Breach, Malware |
+| Scenario | Primary Playbook | Secondary Playbook |
+|----------|------------------|--------------------|
+| Crypto-mining malware | Malware Infection | |
+| Business email compromise | Phishing Attack | |
+| Malicious attachment opened | Phishing Attack | Malware Infection |
+| Loader or stealer found before encryption starts | Malware Infection | Ransomware |
+| Files encrypted or ransom note found | Ransomware | Malware Infection |
 
-## Runbooks
-
-Detailed technical procedures for specific tasks:
-
-| Runbook | Purpose | Tools Used |
-|---------|---------|------------|
-| [Evidence Collection](runbooks/evidence-collection.md) | Forensic artifact gathering | Wazuh, Velociraptor |
-| [Containment Procedures](runbooks/containment-procedures.md) | Threat containment actions | EDR, Firewall, NAC |
-| [Recovery Procedures](runbooks/recovery-procedures.md) | System restoration | Backup, Imaging |
-
-## Templates
-
-Standardized documentation templates:
-
-| Template | Purpose |
-|----------|---------|
-| [Incident Report](templates/incident-report.md) | Final incident documentation |
-| [Post-Incident Review](templates/post-incident-review.md) | Lessons learned documentation |
+Commands in the playbooks that start with `edr-cli` are placeholders. Replace them with the command line of the EDR you run.
 
 ## Escalation Matrix
 

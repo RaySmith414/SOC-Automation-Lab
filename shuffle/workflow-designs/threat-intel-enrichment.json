@@ -1,4 +1,6 @@
 {
+  "kind": "workflow-design",
+  "note": "Design specification, not a Shuffle export. It cannot be imported into Shuffle. Use it as the build sheet for a workflow in the Shuffle editor.",
   "name": "Threat Intelligence Enrichment Workflow",
   "description": "Automated IOC enrichment pipeline using multiple threat intelligence sources",
   "version": "1.0",

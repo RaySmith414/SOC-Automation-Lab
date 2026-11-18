@@ -1,271 +1,161 @@
 # SOC Automation Lab
 
-A comprehensive Security Operations Center (SOC) automation laboratory featuring Shuffle SOAR, TheHive case management, incident response workflows, and automated threat mitigation capabilities.
+[![CI](https://github.com/RaySmith414/SOC-Automation-Lab/actions/workflows/ci.yml/badge.svg)](https://github.com/RaySmith414/SOC-Automation-Lab/actions/workflows/ci.yml)
 
-## Lab Overview
+A Docker lab for security orchestration and case management. It runs Shuffle, TheHive and Cortex with pinned versions, sets them up through their APIs and ships Python tools for IOC extraction, threat intelligence lookups and guarded blocking. Incident response playbooks and TheHive case templates round it out.
 
-| Component | Description | Purpose |
-|-----------|-------------|---------|
-| **Shuffle SOAR** | Security Orchestration, Automation and Response | Workflow automation and integration |
-| **TheHive** | Security Incident Response Platform | Case management and collaboration |
-| **Cortex** | Observable Analysis Engine | Automated threat intelligence |
-| **MISP** | Malware Information Sharing Platform | Threat intelligence sharing |
-| **Wazuh** | Security Monitoring Platform | Log analysis and alerting |
-| **Elasticsearch** | Search and Analytics Engine | Log storage and querying |
+## What is in the lab
 
-## Architecture Diagram
+| Part | Version | Role | Address |
+| --- | --- | --- | --- |
+| Shuffle | 2.3.0 | SOAR: workflows and automation | http://127.0.0.1:3001 |
+| TheHive | 5.8.1 | Case management | http://127.0.0.1:9000 |
+| Cortex | 4.1.0 | Observable analysis engine | http://127.0.0.1:9001 |
+| Cassandra | 4.1.12 | TheHive database | not published |
+| Elasticsearch | 8.19.23 | Index for TheHive and Cortex | not published |
+| OpenSearch | 3.2.0 | Shuffle database | not published |
 
+Around the stack:
+
+- **Python tools** in [`scripts/python`](scripts/README.md): `ioc_extractor.py`, `threat_enrichment.py` and `automated_blocking.py`.
+- **TheHive content** in [`thehive`](thehive/README.md): three case templates and two custom fields, loaded by a provisioning script.
+- **Playbooks** in [`incident-response`](incident-response/README.md): malware infection, phishing and ransomware.
+- **Workflow designs** in [`shuffle`](shuffle/README.md): four build sheets for Shuffle workflows. They are designs, not importable exports.
+
+Wazuh and MISP are not part of the compose file. [`docs/OPTIONAL_COMPONENTS.md`](docs/OPTIONAL_COMPONENTS.md) explains how to run them next to the lab from their own official compose files.
+
+## What is tested
+
+Every push runs two jobs in GitHub Actions.
+
+**Unit tests** on Python 3.9 through 3.13 cover the three tools without any network access: what the extractor accepts and rejects, how the enrichment handles every kind of failed lookup and every guard rail in the blocking script.
+
+**The stack job** starts from a clean runner and:
+
+1. generates secrets with `scripts/setup/init.sh`
+2. starts all eight containers and waits until the health checks pass
+3. checks that TheHive, Cortex and Shuffle answer
+4. runs `scripts/setup/provision.py --self-test`, which sets up Cortex and TheHive through their APIs, creates a case from each template, checks its tasks and deletes it
+5. has Shuffle run two workflows and waits for their results: Shuffle's own "Hello world" and one where the HTTP app fetches TheHive's status page by its name on the lab network
+6. runs the provisioning a second time to prove that it changes nothing when the work is already done
+7. stops the lab with `scripts/setup/stop.sh -v` and checks that no container, network or volume is left and that Docker is not in swarm mode
+
+Not covered by CI: lookups against the live threat intelligence services (they need your API keys), Wazuh, MISP, Cortex analyzers and the workflow designs.
+
+## Requirements
+
+- Linux host with Docker Engine and the Docker Compose plugin. The stack job prints the versions it ran with. Older releases are untested.
+- 16 GB of RAM, the size of the runner the stack is tested on. There the eight containers used about 7 GB after provisioning.
+- About 10 GB of disk for the images
+- `vm.max_map_count` of 262144 or more for Elasticsearch and OpenSearch
+- Python 3.9 or newer for the tools and the provisioning script
+
+## Quick start
+
+```bash
+git clone https://github.com/RaySmith414/SOC-Automation-Lab.git
+cd SOC-Automation-Lab
+
+sudo sysctl -w vm.max_map_count=262144
+scripts/setup/init.sh                    # writes .env with a random value for every secret
+docker compose up -d --wait              # the first start takes a few minutes
+scripts/setup/smoke_test.sh              # checks that every service answers
+
+python3 -m venv .venv
+.venv/bin/pip install -r scripts/python/requirements.txt
+.venv/bin/python scripts/setup/provision.py --self-test
 ```
-┌─────────────────────────────────────────────────────────────────────────────────┐
-│                           SOC AUTOMATION LAB ARCHITECTURE                        │
-├─────────────────────────────────────────────────────────────────────────────────┤
-│                                                                                  │
-│  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐    ┌──────────────┐  │
-│  │   Wazuh      │    │  Suricata    │    │   Zeek       │    │  Sysmon      │  │
-│  │   Agent      │    │    IDS       │    │   NSM        │    │  Logs        │  │
-│  └──────┬───────┘    └──────┬───────┘    └──────┬───────┘    └──────┬───────┘  │
-│         │                   │                   │                   │          │
-│         └───────────────────┴───────────────────┴───────────────────┘          │
-│                                      │                                          │
-│                                      ▼                                          │
-│                        ┌─────────────────────────┐                              │
-│                        │     Wazuh Manager       │                              │
-│                        │   (Log Aggregation)     │                              │
-│                        └───────────┬─────────────┘                              │
-│                                    │                                            │
-│                                    ▼                                            │
-│                        ┌─────────────────────────┐                              │
-│                        │    Elasticsearch        │                              │
-│                        │   (SIEM Backend)        │                              │
-│                        └───────────┬─────────────┘                              │
-│                                    │                                            │
-│         ┌──────────────────────────┼──────────────────────────┐                │
-│         │                          │                          │                │
-│         ▼                          ▼                          ▼                │
-│  ┌─────────────┐          ┌───────────────┐          ┌─────────────┐          │
-│  │   Kibana    │          │    Shuffle    │          │  Grafana    │          │
-│  │ (Visualize) │          │    SOAR       │          │ (Metrics)   │          │
-│  └─────────────┘          └───────┬───────┘          └─────────────┘          │
-│                                   │                                            │
-│                    ┌──────────────┼──────────────┐                            │
-│                    │              │              │                            │
-│                    ▼              ▼              ▼                            │
-│             ┌──────────┐  ┌─────────────┐  ┌──────────┐                       │
-│             │ TheHive  │  │   Cortex    │  │   MISP   │                       │
-│             │  (Cases) │  │ (Analysis)  │  │ (Intel)  │                       │
-│             └──────────┘  └─────────────┘  └──────────┘                       │
-│                                                                                │
-│  ┌─────────────────────────────────────────────────────────────────────────┐  │
-│  │                        AUTOMATED RESPONSE ACTIONS                        │  │
-│  │  ┌─────────┐  ┌─────────┐  ┌─────────┐  ┌─────────┐  ┌─────────────┐   │  │
-│  │  │ Firewall│  │  EDR    │  │  Email  │  │  Ticket │  │ Quarantine  │   │  │
-│  │  │  Block  │  │ Isolate │  │  Alert  │  │ Create  │  │   Host      │   │  │
-│  │  └─────────┘  └─────────┘  └─────────┘  └─────────┘  └─────────────┘   │  │
-│  └─────────────────────────────────────────────────────────────────────────┘  │
-│                                                                                │
-└─────────────────────────────────────────────────────────────────────────────────┘
+
+The provisioning script prints where to log in. The passwords are in `.env`:
+
+| Service | Login | Password variable |
+| --- | --- | --- |
+| TheHive | `admin@thehive.local` | `THEHIVE_ADMIN_PASSWORD` |
+| TheHive | `analyst@soc.lab` (organisation `soc-lab`) | `THEHIVE_ANALYST_PASSWORD` |
+| Cortex | `admin` | `CORTEX_ADMIN_PASSWORD` |
+| Shuffle | `admin` | `SHUFFLE_DEFAULT_PASSWORD` |
+
+To stop the lab, run `scripts/setup/stop.sh`. Add `-v` to delete the data as well. The script runs `docker compose down` and also removes worker containers that Shuffle started for workflow runs. They are not part of the compose project. One that is still running when the stack goes down would stay until it times out. Shuffle pulls and builds images for its apps while it runs. They stay on disk until you remove them.
+
+TheHive 5 is commercial software with a free Community license. StrangeBee's licensing page lists what that license includes.
+
+## Security notes
+
+This is a lab. Run it on a machine you can throw away.
+
+- **Docker socket.** Shuffle runs every workflow step in a container. Its backend and its Orborus service mount `/var/run/docker.sock` to start them. Anything that controls those two containers controls Docker on the host.
+- **Ports.** Every published port is bound to `127.0.0.1`. To reach the lab from another machine, use an SSH tunnel instead of changing the binding.
+- **No swarm mode.** Shuffle's own compose file runs its workers as Docker Swarm services. On a single host that made Docker a swarm node, published ports 33333 to 33337 on every interface and left services running after `docker compose down`. This lab runs workers and apps as plain containers that exist for one workflow run. Shuffle's pipelines are switched off too, because they start a Tenzir container that publishes ports 1514 and 5160.
+- **Secrets.** `init.sh` creates a new random value for each secret and stores it in `.env` with file mode 600. `.env` is ignored by git. The configuration files in the repository hold no secret.
+- **Databases.** Elasticsearch and OpenSearch require a password. Cassandra runs without authentication and is reachable only on the lab's Docker network. Traffic between the containers is not encrypted.
+- **Default accounts.** The provisioning script replaces TheHive's default admin password. Cortex gets its first account from the script, with a generated password.
+
+## Python tools
+
+```bash
+cd scripts/python
+
+# 1. Pull indicators out of a report. Defanged text is understood.
+python3 ioc_extractor.py --input report.txt --output iocs.json
+
+# 2. Look them up. Services without an API key are skipped.
+export VIRUSTOTAL_API_KEY=...
+python3 threat_enrichment.py --input iocs.json --format summary
+
+# 3. Plan a block. Nothing changes without --execute.
+python3 automated_blocking.py --input iocs.json --target blocklist
+python3 automated_blocking.py --input iocs.json --target blocklist --execute --comment "INC-1042"
 ```
 
-## Lab Objectives
+[`scripts/README.md`](scripts/README.md) describes every option, the output formats and the guard rails.
 
-### Security Automation with Shuffle SOAR
-- [ ] Deploy and configure Shuffle SOAR platform
-- [ ] Create automated alert triage workflows
-- [ ] Integrate with threat intelligence feeds
-- [ ] Build enrichment pipelines for IOCs
-- [ ] Develop automated response playbooks
+## Project layout
 
-### Incident Response Planning and Execution
-- [ ] Develop IR playbooks for common attack scenarios
-- [ ] Create escalation procedures and runbooks
-- [ ] Implement automated evidence collection
-- [ ] Build communication templates and procedures
-- [ ] Establish metrics and KPIs tracking
-
-### Case Management with TheHive
-- [ ] Deploy TheHive with Cortex integration
-- [ ] Configure case templates and custom fields
-- [ ] Set up automated case creation from alerts
-- [ ] Implement analyst workflow procedures
-- [ ] Create reporting dashboards
-
-### Scripting and Automation for Threat Mitigation
-- [ ] Develop IOC extraction and enrichment scripts
-- [ ] Create automated blocking/containment scripts
-- [ ] Build threat hunting automation tools
-- [ ] Implement log parsing and analysis scripts
-- [ ] Create integration scripts for tooling
-
-## Directory Structure
-
-```
+```text
 SOC-Automation-Lab/
-├── README.md
-├── docker-compose.yml
-├── .env.example
-├── shuffle/
-│   ├── README.md
-│   ├── workflows/
-│   │   ├── alert-triage.json
-│   │   ├── phishing-response.json
-│   │   ├── malware-response.json
-│   │   └── threat-intel-enrichment.json
-│   └── apps/
-│       └── custom-apps/
-├── thehive/
-│   ├── README.md
-│   ├── config/
-│   │   └── application.conf
-│   ├── templates/
-│   │   ├── case-templates/
-│   │   └── task-templates/
-│   └── cortex/
-│       ├── analyzers/
-│       └── responders/
-├── incident-response/
-│   ├── README.md
-│   ├── playbooks/
-│   │   ├── malware-infection.md
-│   │   ├── phishing-attack.md
-│   │   ├── data-breach.md
-│   │   ├── ransomware.md
-│   │   ├── insider-threat.md
-│   │   └── ddos-attack.md
-│   ├── runbooks/
-│   │   ├── evidence-collection.md
-│   │   ├── containment-procedures.md
-│   │   └── recovery-procedures.md
-│   └── templates/
-│       ├── incident-report.md
-│       └── post-incident-review.md
-├── scripts/
-│   ├── README.md
-│   ├── python/
-│   │   ├── ioc_extractor.py
-│   │   ├── threat_enrichment.py
-│   │   ├── automated_blocking.py
-│   │   └── log_analyzer.py
-│   ├── bash/
-│   │   ├── collect_evidence.sh
-│   │   ├── isolate_host.sh
-│   │   └── backup_logs.sh
-│   └── powershell/
-│       ├── Get-ForensicArtifacts.ps1
-│       ├── Block-ThreatIP.ps1
-│       └── Invoke-MemoryDump.ps1
-├── integrations/
-│   ├── README.md
-│   ├── wazuh/
-│   ├── elasticsearch/
-│   └── misp/
-└── docs/
-    ├── setup-guide.md
-    ├── architecture.md
-    ├── api-reference.md
-    └── troubleshooting.md
+  docker-compose.yml          # core stack with pinned versions
+  .env.example                # every variable, documented (init.sh writes the real .env)
+  scripts/
+    setup/
+      init.sh                 # generates secrets
+      smoke_test.sh           # checks that every service answers
+      provision.py            # sets up Cortex and TheHive through their APIs
+      stop.sh                 # stops the lab and removes Shuffle's run containers
+    python/
+      ioc_extractor.py
+      threat_enrichment.py
+      automated_blocking.py
+      requirements.txt
+  thehive/
+    config/application.conf
+    templates/
+      custom-fields.json
+      case-templates/
+  cortex/
+    config/application.conf
+  shuffle/
+    workflow-designs/
+  incident-response/
+    playbooks/
+  docs/
+    OPTIONAL_COMPONENTS.md
+  tests/
 ```
 
-## Quick Start
+## Running the tests
 
-### Prerequisites
-
-- Docker Engine 20.10+
-- Docker Compose 2.0+
-- Minimum 16GB RAM
-- 100GB available disk space
-- Linux host (Ubuntu 22.04 recommended)
-
-### Installation
-
-1. **Clone the repository**
-   ```bash
-   git clone https://github.com/yourusername/SOC-Automation-Lab.git
-   cd SOC-Automation-Lab
-   ```
-
-2. **Configure environment variables**
-   ```bash
-   cp .env.example .env
-   # Edit .env with your configuration
-   nano .env
-   ```
-
-3. **Set required system parameters**
-   ```bash
-   # Increase virtual memory for Elasticsearch
-   sudo sysctl -w vm.max_map_count=262144
-   echo "vm.max_map_count=262144" | sudo tee -a /etc/sysctl.conf
-   ```
-
-4. **Deploy the lab**
-   ```bash
-   docker-compose up -d
-   ```
-
-5. **Verify deployment**
-   ```bash
-   docker-compose ps
-   ```
-
-### Access Points
-
-| Service | URL | Default Credentials |
-|---------|-----|---------------------|
-| Shuffle SOAR | http://localhost:3001 | admin@shuffle.local / shuffle |
-| TheHive | http://localhost:9000 | admin@thehive.local / secret |
-| Cortex | http://localhost:9001 | admin / secret |
-| Kibana | http://localhost:5601 | elastic / changeme |
-| Wazuh Dashboard | http://localhost:443 | admin / SecretPassword |
-
-## Component Documentation
-
-- [Shuffle SOAR Setup](shuffle/README.md)
-- [TheHive Configuration](thehive/README.md)
-- [Incident Response Playbooks](incident-response/README.md)
-- [Automation Scripts](scripts/README.md)
-- [Integration Guides](integrations/README.md)
-
-## Lab Exercises
-
-### Exercise 1: Alert Triage Automation
-Configure Shuffle to automatically triage and enrich incoming security alerts from Wazuh.
-
-### Exercise 2: Phishing Response Workflow
-Build an end-to-end phishing incident response workflow with automated analysis and containment.
-
-### Exercise 3: Case Management Integration
-Set up automated case creation in TheHive with Cortex analysis integration.
-
-### Exercise 4: Threat Intelligence Enrichment
-Create automated IOC enrichment pipelines using multiple threat intelligence sources.
-
-### Exercise 5: Automated Incident Response
-Develop automated response actions for common security incidents.
-
-## Skills Developed
-
-- Security Orchestration and Automation (SOAR)
-- Incident Response Planning and Execution
-- Case Management and Workflow Design
-- Python/Bash Scripting for Security
-- API Integration and Development
-- Threat Intelligence Operations
-- Log Analysis and Correlation
-- Security Tool Integration
-
-## References
-
-- [Shuffle SOAR Documentation](https://shuffler.io/docs)
-- [TheHive Project](https://thehive-project.org/)
-- [Cortex Documentation](https://github.com/TheHive-Project/Cortex)
-- [MISP Project](https://www.misp-project.org/)
-- [Wazuh Documentation](https://documentation.wazuh.com/)
-- [NIST Incident Response Guide](https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-61r2.pdf)
+```bash
+python3 -m pip install -r requirements-dev.txt
+ruff check .
+python3 -m pytest
+```
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+MIT. See [LICENSE](LICENSE).
 
-## Contributing
+Shuffle, TheHive, Cortex, Cassandra, Elasticsearch and OpenSearch are the work of their own projects and companies and come under their own licenses. This repository only configures them.
 
-Contributions are welcome! Please read our contributing guidelines before submitting pull requests.
+## Author
+
+Rayshaun Smith ([GitHub](https://github.com/RaySmith414))

@@ -1,281 +1,66 @@
-# Shuffle SOAR Configuration
+# Shuffle
 
-Security Orchestration, Automation and Response (SOAR) platform for automating security workflows and integrating security tools.
+[Shuffle](https://shuffler.io) is the automation engine of the lab. The compose file runs four containers for it, all at version 2.3.0:
 
-## Overview
+| Container | Role |
+| --- | --- |
+| `shuffle-frontend` | Web interface on http://127.0.0.1:3001 |
+| `shuffle-backend` | API on http://127.0.0.1:5001 |
+| `shuffle-orborus` | Starts a worker container for every workflow run |
+| `shuffle-opensearch` | Database |
 
-Shuffle is an open-source SOAR platform that enables security teams to automate repetitive tasks, orchestrate security tools, and respond to incidents faster.
+## Logging in
 
-## Architecture
+`scripts/setup/init.sh` writes the first account to `.env`:
 
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│                         SHUFFLE SOAR                                │
-├─────────────────────────────────────────────────────────────────────┤
-│                                                                     │
-│  ┌─────────────┐    ┌─────────────┐    ┌─────────────┐            │
-│  │   Triggers  │    │  Workflows  │    │   Actions   │            │
-│  │             │───▶│             │───▶│             │            │
-│  │ - Webhook   │    │ - Logic     │    │ - API Calls │            │
-│  │ - Schedule  │    │ - Conditions│    │ - Scripts   │            │
-│  │ - Email     │    │ - Loops     │    │ - Notify    │            │
-│  └─────────────┘    └─────────────┘    └─────────────┘            │
-│                                                                     │
-│  ┌─────────────────────────────────────────────────────────────┐  │
-│  │                      INTEGRATIONS                            │  │
-│  │  ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌───────┐ │  │
-│  │  │ TheHive │ │ Cortex  │ │  MISP   │ │  Wazuh  │ │ Email │ │  │
-│  │  └─────────┘ └─────────┘ └─────────┘ └─────────┘ └───────┘ │  │
-│  │  ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌───────┐ │  │
-│  │  │VirusTotal│ │ AbuseIPDB│ │ Shodan │ │ Slack  │ │Jira   │ │  │
-│  │  └─────────┘ └─────────┘ └─────────┘ └─────────┘ └───────┘ │  │
-│  └─────────────────────────────────────────────────────────────┘  │
-│                                                                     │
-└─────────────────────────────────────────────────────────────────────┘
-```
+- user: `SHUFFLE_DEFAULT_USERNAME` (`admin`)
+- password: `SHUFFLE_DEFAULT_PASSWORD`
+- API key: `SHUFFLE_DEFAULT_APIKEY`
 
-## Installation
-
-### Docker Deployment
-
-```yaml
-# Included in main docker-compose.yml
-shuffle:
-  image: ghcr.io/shuffle/shuffle-frontend:latest
-  container_name: shuffle-frontend
-  hostname: shuffle-frontend
-  ports:
-    - "3001:80"
-    - "3443:443"
-  environment:
-    - BACKEND_HOSTNAME=shuffle-backend
-  restart: unless-stopped
-  depends_on:
-    - shuffle-backend
-```
-
-### Initial Setup
-
-1. Access Shuffle at `http://localhost:3001`
-2. Create admin account on first login
-3. Configure organization settings
-4. Add API integrations
-
-## Workflows
-
-### Available Workflows
-
-| Workflow | Description | Trigger |
-|----------|-------------|---------|
-| [Alert Triage](workflows/alert-triage.json) | Automated alert classification and enrichment | Webhook from Wazuh |
-| [Phishing Response](workflows/phishing-response.json) | Email analysis and containment | Email/Manual |
-| [Malware Response](workflows/malware-response.json) | Malware containment and remediation | Alert trigger |
-| [Threat Intel Enrichment](workflows/threat-intel-enrichment.json) | IOC enrichment pipeline | Webhook/Schedule |
-
-### Workflow Categories
-
-#### 1. Alert Triage
-- Automatic severity classification
-- IOC extraction and enrichment
-- False positive filtering
-- Escalation routing
-
-#### 2. Incident Response
-- Automated containment actions
-- Evidence collection triggers
-- Notification workflows
-- Case creation
-
-#### 3. Threat Intelligence
-- IOC ingestion from feeds
-- Automated enrichment
-- Reputation scoring
-- Blocklist updates
-
-#### 4. Reporting
-- Metrics collection
-- Dashboard updates
-- Report generation
-- Compliance tracking
-
-## Configuration
-
-### Environment Variables
+The backend creates that account on its first start. The API key has to be a UUID, which is why `init.sh` generates one.
 
 ```bash
-# Shuffle Configuration
-SHUFFLE_BACKEND_URL=http://shuffle-backend:5001
-SHUFFLE_OPENSEARCH_URL=https://opensearch:9200
-SHUFFLE_ENCRYPTION_KEY=your-encryption-key-here
-SHUFFLE_DEFAULT_USERNAME=admin@shuffle.local
-SHUFFLE_DEFAULT_PASSWORD=shuffle_password
-SHUFFLE_DEFAULT_APIKEY=your-api-key-here
+source .env
+curl -H "Authorization: Bearer $SHUFFLE_DEFAULT_APIKEY" http://127.0.0.1:5001/api/v1/workflows
 ```
 
-### API Integration Setup
+The first start takes a few minutes because the backend downloads and builds its app catalog.
 
-#### TheHive Integration
-```json
-{
-  "name": "TheHive",
-  "url": "http://thehive:9000",
-  "api_key": "YOUR_THEHIVE_API_KEY",
-  "verify_ssl": false
-}
-```
+## How a workflow runs here
 
-#### Cortex Integration
-```json
-{
-  "name": "Cortex",
-  "url": "http://cortex:9001",
-  "api_key": "YOUR_CORTEX_API_KEY",
-  "verify_ssl": false
-}
-```
+Orborus asks the backend for queued runs and starts a worker container for each one. The worker starts one container per step from the app's image. All of them share the network of the Orborus container and are removed when they finish.
 
-#### VirusTotal Integration
-```json
-{
-  "name": "VirusTotal",
-  "api_key": "YOUR_VT_API_KEY",
-  "rate_limit": 4
-}
-```
+Because these containers are not part of the compose project, stop the lab with `scripts/setup/stop.sh`. It removes any that are still running.
 
-#### MISP Integration
-```json
-{
-  "name": "MISP",
-  "url": "https://misp:443",
-  "api_key": "YOUR_MISP_API_KEY",
-  "verify_ssl": false
-}
-```
+This differs from Shuffle's own compose file, which sets `SHUFFLE_SWARM_CONFIG=run` and keeps workers and apps running as Docker Swarm services. The lab leaves that setting out for the reasons given in the security notes of the main README. A run takes a few seconds longer because containers start on demand.
 
-## Creating Workflows
+`scripts/setup/provision.py --self-test` proves the path on every CI run with two workflows:
 
-### Basic Workflow Structure
+1. Shuffle's own first workflow: the Shuffle Tools action `repeat_back_to_me` returns "Hello world".
+2. The HTTP app requests `http://thehive:9000/api/v1/status/public` and gets HTTP 200.
 
-```json
-{
-  "name": "Example Workflow",
-  "description": "Template workflow structure",
-  "triggers": [
-    {
-      "type": "webhook",
-      "name": "Incoming Alert"
-    }
-  ],
-  "actions": [
-    {
-      "name": "Parse Alert",
-      "app_name": "Shuffle Tools",
-      "action": "parse_json"
-    },
-    {
-      "name": "Enrich IOC",
-      "app_name": "VirusTotal",
-      "action": "get_ip_report"
-    },
-    {
-      "name": "Create Case",
-      "app_name": "TheHive",
-      "action": "create_case"
-    }
-  ],
-  "conditions": [
-    {
-      "name": "Check Severity",
-      "condition": "$parse_alert.severity >= 3"
-    }
-  ]
-}
-```
+## Workflow designs
 
-### Workflow Best Practices
+[`workflow-designs/`](workflow-designs) holds four build sheets:
 
-1. **Use Descriptive Names**: Name workflows and actions clearly
-2. **Add Error Handling**: Include fallback actions for failures
-3. **Implement Logging**: Log important steps for debugging
-4. **Use Variables**: Leverage workflow variables for reusability
-5. **Test Thoroughly**: Test with sample data before production
+| File | What the workflow should do |
+| --- | --- |
+| `alert-triage.json` | Take a Wazuh alert, extract indicators, look them up, score the alert and open a TheHive alert |
+| `phishing-response.json` | Parse a reported email, check URLs and attachments, open a case and notify the reporter |
+| `malware-response.json` | Take an endpoint detection, gather context, contain the host and open a case |
+| `threat-intel-enrichment.json` | Look indicators up in several services and write the result back |
 
-## Use Cases
+**These files are designs, not Shuffle exports. They cannot be imported.** Each one lists triggers, steps, the app a step needs and how data flows from step to step. Use them as the build sheet when you create the workflow in the Shuffle editor. Step and app names in the designs are descriptive and do not always match the name of an app in Shuffle's catalog.
 
-### Use Case 1: Automated Alert Triage
+A test (`tests/test_repository.py`) keeps the designs consistent: every step has a unique ID and every reference between steps points at a step that exists.
 
-**Scenario**: High volume of security alerts requiring initial analysis
+## Connecting Shuffle to the rest of the lab
 
-**Workflow**:
-1. Receive alert via webhook
-2. Extract IOCs (IPs, domains, hashes)
-3. Query threat intelligence sources
-4. Calculate risk score
-5. Route based on severity
-6. Create case if threshold met
+Inside the lab's Docker network the services reach each other by name. The self-test checks the TheHive address. The Cortex address follows the same pattern and is not tested from a workflow.
 
-### Use Case 2: Phishing Investigation
+| Service | URL from a Shuffle app | Credential |
+| --- | --- | --- |
+| TheHive | `http://thehive:9000` | An API key you create for the analyst account in TheHive |
+| Cortex | `http://cortex:9001` | An API key from Cortex |
 
-**Scenario**: User reports suspicious email
-
-**Workflow**:
-1. Receive email submission
-2. Extract headers, URLs, attachments
-3. Analyze URLs with urlscan.io
-4. Check attachments in sandbox
-5. Query email reputation
-6. Create incident case
-7. Notify security team
-
-### Use Case 3: Endpoint Containment
-
-**Scenario**: Malware detected on endpoint
-
-**Workflow**:
-1. Receive malware alert
-2. Verify alert validity
-3. Gather endpoint details
-4. Initiate network isolation
-5. Trigger memory dump
-6. Create forensic case
-7. Notify incident responders
-
-## Troubleshooting
-
-### Common Issues
-
-| Issue | Solution |
-|-------|----------|
-| Workflow not triggering | Check webhook URL and authentication |
-| App connection failed | Verify API keys and network connectivity |
-| Action timeout | Increase timeout or optimize query |
-| Variable not found | Check variable naming and scope |
-
-### Debug Mode
-
-Enable debug logging:
-```bash
-docker logs -f shuffle-backend 2>&1 | grep -i "workflow"
-```
-
-### Health Check
-
-```bash
-curl -X GET http://localhost:3001/api/v1/health
-```
-
-## Security Considerations
-
-- Store API keys in environment variables
-- Use HTTPS for all external connections
-- Implement rate limiting for API calls
-- Review workflow permissions regularly
-- Audit workflow execution logs
-
-## References
-
-- [Shuffle Documentation](https://shuffler.io/docs)
-- [Shuffle GitHub](https://github.com/Shuffle/Shuffle)
-- [Shuffle Apps Library](https://shuffler.io/apps)
-- [SOAR Best Practices](https://shuffler.io/docs/best_practices)
+A workflow can also call the Python tools. `automated_blocking.py` has a `webhook` target that posts a block request to a Shuffle webhook, so a workflow can decide what to do with it.

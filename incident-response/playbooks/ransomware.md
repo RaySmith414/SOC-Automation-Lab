@@ -417,9 +417,9 @@ RECOVERY CHECKLIST PER SYSTEM:
 ☐ Monitor closely for 72 hours
 ```
 
-### 6.3 Enhanced Monitoring
+### 6.3 Extra Monitoring
 
-Deploy enhanced monitoring during recovery:
+Add monitoring during recovery:
 
 ```yaml
 # Enhanced detection rules
@@ -457,7 +457,7 @@ rules:
 **Immediate Improvements:**
 
 - [ ] Implement/improve network segmentation
-- [ ] Deploy/enhance EDR coverage
+- [ ] Deploy or extend EDR coverage
 - [ ] Enable MFA everywhere
 - [ ] Implement 3-2-1 backup strategy
 - [ ] Regular offline backup testing
@@ -493,8 +493,6 @@ rules:
 ### Related Playbooks
 
 - [Malware Infection](malware-infection.md)
-- [Data Breach](data-breach.md)
-- [Business Continuity](business-continuity.md)
 
 ### References
 

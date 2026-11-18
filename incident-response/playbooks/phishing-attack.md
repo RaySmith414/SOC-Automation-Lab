@@ -12,7 +12,7 @@
 
 ## Purpose
 
-This playbook provides guidance for responding to phishing attacks, including credential harvesting, malware delivery via email, and business email compromise (BEC) attempts.
+This playbook provides guidance for responding to phishing attacks, including credential harvesting, malware delivery by email and business email compromise (BEC) attempts.
 
 ## Scope
 
@@ -434,8 +434,6 @@ Complete investigation documentation:
 ### Related Playbooks
 
 - [Malware Infection](malware-infection.md)
-- [Data Breach](data-breach.md)
-- [Account Compromise](account-compromise.md)
 
 ### References
 

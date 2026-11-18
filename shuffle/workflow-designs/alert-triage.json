@@ -1,4 +1,6 @@
 {
+  "kind": "workflow-design",
+  "note": "Design specification, not a Shuffle export. It cannot be imported into Shuffle. Use it as the build sheet for a workflow in the Shuffle editor.",
   "name": "Alert Triage Workflow",
   "description": "Automated alert triage with enrichment and severity classification",
   "version": "1.0",
@@ -111,7 +113,10 @@
         "source": "Wazuh",
         "sourceRef": "$action_1.result.id",
         "type": "wazuh_alert",
-        "tags": ["auto-triaged", "$action_7.severity"],
+        "tags": [
+          "auto-triaged",
+          "$action_7.severity"
+        ],
         "observables": "$action_2"
       },
       "position": 5
@@ -157,7 +162,9 @@
     "retry_delay": 5,
     "notification": {
       "type": "email",
-      "recipients": ["soc-team@company.com"]
+      "recipients": [
+        "soc-team@company.com"
+      ]
     }
   }
 }

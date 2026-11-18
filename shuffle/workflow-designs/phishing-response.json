@@ -1,4 +1,6 @@
 {
+  "kind": "workflow-design",
+  "note": "Design specification, not a Shuffle export. It cannot be imported into Shuffle. Use it as the build sheet for a workflow in the Shuffle editor.",
   "name": "Phishing Response Workflow",
   "description": "Automated phishing email analysis and response workflow",
   "version": "1.0",
@@ -138,7 +140,11 @@
         "title": "Phishing Investigation: $action_1.subject",
         "description": "## Phishing Email Analysis\\n\\n**Subject:** $action_1.subject\\n**From:** $action_3.sender_email\\n**Received:** $action_1.date\\n\\n### Analysis Results\\n**Verdict:** $action_9.verdict\\n**Score:** $action_9.score\\n\\n### Indicators\\n$action_9.indicators\\n\\n### URLs Found\\n$action_2.result\\n\\n### Attachments\\n$action_1.attachments",
         "severity": "$action_9.verdict == 'malicious' ? 3 : $action_9.verdict == 'suspicious' ? 2 : 1",
-        "tags": ["phishing", "$action_9.verdict", "automated"],
+        "tags": [
+          "phishing",
+          "$action_9.verdict",
+          "automated"
+        ],
         "template": "phishing-investigation",
         "customFields": {
           "sender-domain": "$action_3.sender_domain",
@@ -159,12 +165,16 @@
           {
             "dataType": "mail",
             "data": "$action_3.sender_email",
-            "tags": ["sender"]
+            "tags": [
+              "sender"
+            ]
           },
           {
             "dataType": "domain",
             "data": "$action_3.sender_domain",
-            "tags": ["sender-domain"]
+            "tags": [
+              "sender-domain"
+            ]
           }
         ]
       },
