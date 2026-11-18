@@ -1,23 +1,132 @@
-version: '3.8'
+# SOC Automation Lab: core stack
+#
+#   Shuffle (SOAR)      http://127.0.0.1:3001
+#   TheHive (cases)     http://127.0.0.1:9000
+#   Cortex (analysis)   http://127.0.0.1:9001
+#
+# Run scripts/setup/init.sh once to create .env, then: docker compose up -d
+#
+# Every published port is bound to 127.0.0.1. The databases are not published
+# at all. Image versions are pinned on purpose. Wazuh and MISP run from their
+# own official compose files (docs/OPTIONAL_COMPONENTS.md).
 
-# SOC Automation Lab - Docker Compose
-# Includes: Shuffle SOAR, TheHive, Cortex, MISP, Wazuh, Elasticsearch
+name: soc-lab
 
 services:
-  # ===========================================
-  # ELASTICSEARCH - Backend for TheHive & Wazuh
-  # ===========================================
+  # ------------------------------------------------------------------ TheHive
+  cassandra:
+    image: cassandra:4.1.12
+    hostname: cassandra
+    environment:
+      CASSANDRA_CLUSTER_NAME: soc-lab
+      MAX_HEAP_SIZE: 1024M
+      HEAP_NEWSIZE: 256M
+    volumes:
+      - cassandra-data:/var/lib/cassandra
+    networks: [soc]
+    healthcheck:
+      test: ["CMD-SHELL", "cqlsh -e 'describe keyspaces' || exit 1"]
+      start_period: 120s
+      interval: 10s
+      timeout: 10s
+      retries: 12
+    restart: unless-stopped
+
   elasticsearch:
-    image: docker.elastic.co/elasticsearch/elasticsearch:7.17.9
-    container_name: elasticsearch
+    # Index for TheHive and Cortex. Reachable only on the lab network.
+    image: elasticsearch:8.19.23
     hostname: elasticsearch
     environment:
-      - discovery.type=single-node
-      - cluster.name=soc-lab
-      - bootstrap.memory_lock=true
-      - xpack.security.enabled=true
-      - ELASTIC_PASSWORD=${ELASTIC_PASSWORD:-changeme}
-      - "ES_JAVA_OPTS=-Xms1g -Xmx1g"
+      discovery.type: single-node
+      cluster.name: soc-lab
+      xpack.security.enabled: "true"
+      ELASTIC_PASSWORD: ${ELASTIC_PASSWORD:?run scripts/setup/init.sh to create .env}
+      ES_JAVA_OPTS: -Xms1g -Xmx1g
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    volumes:
+      - elasticsearch-data:/usr/share/elasticsearch/data
+    networks: [soc]
+    healthcheck:
+      # $$ keeps the password out of the rendered compose file. The container reads it from its own environment.
+      test: ["CMD-SHELL", "curl -fsS -u \"elastic:$${ELASTIC_PASSWORD}\" 'http://localhost:9200/_cluster/health?wait_for_status=yellow&timeout=5s' || exit 1"]
+      start_period: 60s
+      interval: 10s
+      timeout: 10s
+      retries: 12
+    restart: unless-stopped
+
+  thehive:
+    image: strangebee/thehive:5.8.1
+    hostname: thehive
+    command: ["--no-config", "--no-config-secret"]
+    environment:
+      JAVA_OPTS: -Xms1g -Xmx1g -XX:MaxMetaspaceSize=400m -XX:ReservedCodeCacheSize=250m
+      THEHIVE_SECRET: ${THEHIVE_SECRET:?run scripts/setup/init.sh to create .env}
+      ELASTIC_PASSWORD: ${ELASTIC_PASSWORD:?run scripts/setup/init.sh to create .env}
+    volumes:
+      - ./thehive/config/application.conf:/etc/thehive/application.conf:ro
+      - thehive-files:/opt/thp/thehive/files
+    ports:
+      - "127.0.0.1:9000:9000"
+    networks: [soc]
+    depends_on:
+      cassandra:
+        condition: service_healthy
+      elasticsearch:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:9000/api/v1/status/public || exit 1"]
+      start_period: 180s
+      interval: 10s
+      timeout: 5s
+      retries: 18
+    restart: unless-stopped
+
+  # ------------------------------------------------------------------- Cortex
+  cortex:
+    # Starts without access to the Docker socket, so it cannot run analyzers yet.
+    # docs/OPTIONAL_COMPONENTS.md shows how to turn that on and what it means for the host.
+    image: thehiveproject/cortex:4.1.0
+    hostname: cortex
+    environment:
+      JAVA_OPTS: -Xms1g -Xmx1g -XX:MaxMetaspaceSize=400m -XX:ReservedCodeCacheSize=250m
+      es_uri: http://elasticsearch:9200
+      CORTEX_SECRET: ${CORTEX_SECRET:?run scripts/setup/init.sh to create .env}
+      ELASTIC_PASSWORD: ${ELASTIC_PASSWORD:?run scripts/setup/init.sh to create .env}
+    volumes:
+      - ./cortex/config/application.conf:/etc/cortex/application.conf:ro
+    ports:
+      - "127.0.0.1:9001:9001"
+    networks: [soc]
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:9001/api/status || exit 1"]
+      start_period: 120s
+      interval: 10s
+      timeout: 5s
+      retries: 18
+    restart: unless-stopped
+
+  # ------------------------------------------------------------------ Shuffle
+  shuffle-opensearch:
+    image: opensearchproject/opensearch:3.2.0
+    hostname: shuffle-opensearch
+    environment:
+      OPENSEARCH_JAVA_OPTS: -Xms1g -Xmx1g
+      bootstrap.memory_lock: "true"
+      DISABLE_PERFORMANCE_ANALYZER_AGENT_CLI: "true"
+      cluster.initial_master_nodes: shuffle-opensearch
+      cluster.routing.allocation.disk.threshold_enabled: "false"
+      cluster.name: shuffle-cluster
+      node.name: shuffle-opensearch
+      node.store.allow_mmap: "false"
+      discovery.seed_hosts: shuffle-opensearch
+      OPENSEARCH_INITIAL_ADMIN_PASSWORD: ${SHUFFLE_OPENSEARCH_PASSWORD:?run scripts/setup/init.sh to create .env}
     ulimits:
       memlock:
         soft: -1
@@ -26,348 +135,111 @@ services:
         soft: 65536
         hard: 65536
     volumes:
-      - elasticsearch-data:/usr/share/elasticsearch/data
-    ports:
-      - "9200:9200"
-    networks:
-      - soc-network
-    healthcheck:
-      test: ["CMD-SHELL", "curl -s http://localhost:9200/_cluster/health | grep -q 'green\\|yellow'"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-    restart: unless-stopped
-
-  # ===========================================
-  # CASSANDRA - Backend for TheHive
-  # ===========================================
-  cassandra:
-    image: cassandra:4.0
-    container_name: cassandra
-    hostname: cassandra
-    environment:
-      - CASSANDRA_CLUSTER_NAME=thehive
-      - MAX_HEAP_SIZE=1G
-      - HEAP_NEWSIZE=256M
-    volumes:
-      - cassandra-data:/var/lib/cassandra
-    networks:
-      - soc-network
-    healthcheck:
-      test: ["CMD-SHELL", "cqlsh -e 'describe cluster'"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-    restart: unless-stopped
-
-  # ===========================================
-  # THEHIVE - Security Incident Response Platform
-  # ===========================================
-  thehive:
-    image: strangebee/thehive:5.2
-    container_name: thehive
-    hostname: thehive
-    depends_on:
-      cassandra:
-        condition: service_healthy
-      elasticsearch:
-        condition: service_healthy
-    environment:
-      - JVM_OPTS=-Xms512m -Xmx1024m
-    volumes:
-      - ./thehive/config/application.conf:/etc/thehive/application.conf:ro
-      - thehive-data:/opt/thp/thehive/data
-    ports:
-      - "9000:9000"
-    networks:
-      - soc-network
-    restart: unless-stopped
-
-  # ===========================================
-  # CORTEX - Observable Analysis Engine
-  # ===========================================
-  cortex:
-    image: thehiveproject/cortex:3.1.7
-    container_name: cortex
-    hostname: cortex
-    depends_on:
-      elasticsearch:
-        condition: service_healthy
-    environment:
-      - job_directory=/tmp/cortex-jobs
-    volumes:
-      - cortex-data:/opt/cortex/data
-      - /var/run/docker.sock:/var/run/docker.sock
-    ports:
-      - "9001:9001"
-    networks:
-      - soc-network
-    restart: unless-stopped
-
-  # ===========================================
-  # MISP - Threat Intelligence Platform
-  # ===========================================
-  misp-db:
-    image: mysql:8.0
-    container_name: misp-db
-    hostname: misp-db
-    environment:
-      - MYSQL_DATABASE=misp
-      - MYSQL_USER=misp
-      - MYSQL_PASSWORD=${MISP_DB_PASSWORD:-misp}
-      - MYSQL_ROOT_PASSWORD=${MISP_DB_ROOT_PASSWORD:-misp_root}
-    volumes:
-      - misp-db-data:/var/lib/mysql
-    networks:
-      - soc-network
-    restart: unless-stopped
-
-  misp-redis:
-    image: redis:7
-    container_name: misp-redis
-    hostname: misp-redis
-    networks:
-      - soc-network
-    restart: unless-stopped
-
-  misp:
-    image: coolacid/misp-docker:core-latest
-    container_name: misp
-    hostname: misp
-    depends_on:
-      - misp-db
-      - misp-redis
-    environment:
-      - MYSQL_HOST=misp-db
-      - MYSQL_DATABASE=misp
-      - MYSQL_USER=misp
-      - MYSQL_PASSWORD=${MISP_DB_PASSWORD:-misp}
-      - MISP_ADMIN_EMAIL=admin@admin.test
-      - MISP_ADMIN_PASSPHRASE=${MISP_ADMIN_PASSWORD:-admin}
-      - MISP_BASEURL=https://localhost
-      - REDIS_FQDN=misp-redis
-      - HOSTNAME=misp
-    volumes:
-      - misp-data:/var/www/MISP
-    ports:
-      - "8443:443"
-      - "8080:80"
-    networks:
-      - soc-network
-    restart: unless-stopped
-
-  # ===========================================
-  # SHUFFLE SOAR - Security Orchestration
-  # ===========================================
-  shuffle-database:
-    image: opensearchproject/opensearch:2.11.0
-    container_name: shuffle-database
-    hostname: shuffle-database
-    environment:
-      - discovery.type=single-node
-      - OPENSEARCH_JAVA_OPTS=-Xms512m -Xmx512m
-      - plugins.security.disabled=true
-      - DISABLE_SECURITY_PLUGIN=true
-    volumes:
       - shuffle-database:/usr/share/opensearch/data
-    networks:
-      - soc-network
+    networks: [soc]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsSk -u \"admin:$${OPENSEARCH_INITIAL_ADMIN_PASSWORD}\" 'https://localhost:9200/_cluster/health?wait_for_status=yellow&timeout=5s' || exit 1"]
+      start_period: 90s
+      interval: 10s
+      timeout: 10s
+      retries: 18
     restart: unless-stopped
 
   shuffle-backend:
-    image: ghcr.io/shuffle/shuffle-backend:latest
-    container_name: shuffle-backend
+    image: ghcr.io/shuffle/shuffle-backend:${SHUFFLE_VERSION:-2.3.0}
     hostname: shuffle-backend
-    depends_on:
-      - shuffle-database
     environment:
-      - SHUFFLE_APP_HOTLOAD_FOLDER=/shuffle-apps
-      - SHUFFLE_FILE_LOCATION=/shuffle-files
-      - SHUFFLE_OPENSEARCH_URL=https://shuffle-database:9200
-      - SHUFFLE_OPENSEARCH_SKIPSSL_VERIFY=true
-      - SHUFFLE_ENCRYPTION_KEY=${SHUFFLE_ENCRYPTION_KEY:-shuffle_encryption_key_here}
-      - SHUFFLE_DEFAULT_USERNAME=${SHUFFLE_USERNAME:-admin}
-      - SHUFFLE_DEFAULT_PASSWORD=${SHUFFLE_PASSWORD:-shuffle}
-      - SHUFFLE_DEFAULT_APIKEY=${SHUFFLE_API_KEY:-}
-      - BACKEND_HOSTNAME=shuffle-backend
-      - ORG_ID=Shuffle
-      - SHUFFLE_DOWNLOAD_WORKFLOW_LOCATION=https://github.com/shuffle/workflows
+      SHUFFLE_APP_HOTLOAD_FOLDER: /shuffle-apps
+      SHUFFLE_FILE_LOCATION: /shuffle-files
+      SHUFFLE_APP_DOWNLOAD_LOCATION: https://github.com/shuffle/python-apps
+      SHUFFLE_DEFAULT_USERNAME: ${SHUFFLE_DEFAULT_USERNAME:-admin}
+      SHUFFLE_DEFAULT_PASSWORD: ${SHUFFLE_DEFAULT_PASSWORD:?run scripts/setup/init.sh to create .env}
+      SHUFFLE_DEFAULT_APIKEY: ${SHUFFLE_DEFAULT_APIKEY:?run scripts/setup/init.sh to create .env}
+      SHUFFLE_ENCRYPTION_MODIFIER: ${SHUFFLE_ENCRYPTION_MODIFIER:?run scripts/setup/init.sh to create .env}
+      SHUFFLE_ELASTIC: "true"
+      SHUFFLE_OPENSEARCH_URL: https://shuffle-opensearch:9200
+      SHUFFLE_OPENSEARCH_USERNAME: admin
+      SHUFFLE_OPENSEARCH_PASSWORD: ${SHUFFLE_OPENSEARCH_PASSWORD:?run scripts/setup/init.sh to create .env}
+      SHUFFLE_OPENSEARCH_SKIPSSL_VERIFY: "true"
+      BACKEND_HOSTNAME: shuffle-backend
+      OUTER_HOSTNAME: shuffle-backend
+      BASE_URL: http://shuffle-backend:5001
+      SSO_REDIRECT_URL: http://localhost:3001
+      ENVIRONMENT_NAME: Shuffle
+      ORG_ID: Shuffle
+      DOCKER_API_VERSION: "1.44"
+      SHUFFLE_CONTAINER_AUTO_CLEANUP: "true"
+      SHUFFLE_LOGS_DISABLED: "true"
+      SHUFFLE_STATS_DISABLED: "true"
     volumes:
+      # Shuffle starts its apps as containers. The socket gives it control of Docker on this host.
       - /var/run/docker.sock:/var/run/docker.sock
       - shuffle-apps:/shuffle-apps
       - shuffle-files:/shuffle-files
     ports:
-      - "5001:5001"
-    networks:
-      - soc-network
+      - "127.0.0.1:5001:5001"
+    networks: [soc]
+    depends_on:
+      shuffle-opensearch:
+        condition: service_healthy
     restart: unless-stopped
 
   shuffle-frontend:
-    image: ghcr.io/shuffle/shuffle-frontend:latest
-    container_name: shuffle-frontend
+    image: ghcr.io/shuffle/shuffle-frontend:${SHUFFLE_VERSION:-2.3.0}
     hostname: shuffle-frontend
+    environment:
+      BACKEND_HOSTNAME: shuffle-backend
+    ports:
+      - "127.0.0.1:3001:80"
+      - "127.0.0.1:3443:443"
+    networks: [soc]
     depends_on:
       - shuffle-backend
-    environment:
-      - BACKEND_HOSTNAME=shuffle-backend
-    ports:
-      - "3001:80"
-      - "3443:443"
-    networks:
-      - soc-network
     restart: unless-stopped
 
   shuffle-orborus:
-    image: ghcr.io/shuffle/shuffle-orborus:latest
-    container_name: shuffle-orborus
+    image: ghcr.io/shuffle/shuffle-orborus:${SHUFFLE_VERSION:-2.3.0}
+    # Orborus starts a worker container for every workflow run and puts it in its
+    # own network namespace. It finds itself by this name.
+    container_name: soc-lab-shuffle-orborus
     hostname: shuffle-orborus
-    depends_on:
-      - shuffle-backend
     environment:
-      - SHUFFLE_APP_SDK_VERSION=1.2.0
-      - SHUFFLE_WORKER_VERSION=latest
-      - RUNNING_MODE=docker
-      - SHUFFLE_BASE_URL=http://shuffle-backend:5001
-      - SHUFFLE_ORBORUS_EXECUTION_TIMEOUT=120
-      - ENVIRONMENT_NAME=Shuffle
-      - ORG_ID=Shuffle
-      - DOCKER_API_VERSION=1.40
-      - CLEANUP=true
+      ORBORUS_CONTAINER_NAME: soc-lab-shuffle-orborus
+      SHUFFLE_APP_SDK_TIMEOUT: "300"
+      ENVIRONMENT_NAME: Shuffle
+      ORG_ID: Shuffle
+      BASE_URL: http://shuffle-backend:5001
+      DOCKER_API_VERSION: "1.44"
+      SHUFFLE_PASS_WORKER_PROXY: "TRUE"
+      SHUFFLE_PASS_APP_PROXY: "TRUE"
+      SHUFFLE_STATS_DISABLED: "true"
+      SHUFFLE_LOGS_DISABLED: "true"
+      # Shuffle's own compose file sets SHUFFLE_SWARM_CONFIG=run here. That turns the
+      # Docker host into a swarm node and publishes ports 33333 to 33337 on every
+      # interface. This lab leaves it out: workers and apps run as plain containers
+      # that exist for one workflow run. See the security notes in the README.
+      # Pipelines would start a Tenzir container that publishes ports 1514 and 5160.
+      SHUFFLE_SKIP_PIPELINES: "true"
+      SHUFFLE_PIPELINE_ENABLED: "false"
+      CLEANUP: "true"
+      SHUFFLE_WORKER_IMAGE: ghcr.io/shuffle/shuffle-worker:${SHUFFLE_VERSION:-2.3.0}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-    networks:
-      - soc-network
-    restart: unless-stopped
-
-  # ===========================================
-  # WAZUH - Security Monitoring
-  # ===========================================
-  wazuh-manager:
-    image: wazuh/wazuh-manager:4.7.2
-    container_name: wazuh-manager
-    hostname: wazuh-manager
-    environment:
-      - INDEXER_URL=https://elasticsearch:9200
-      - INDEXER_USERNAME=admin
-      - INDEXER_PASSWORD=${ELASTIC_PASSWORD:-changeme}
-      - FILEBEAT_SSL_VERIFICATION_MODE=none
-      - API_USERNAME=${WAZUH_API_USER:-wazuh}
-      - API_PASSWORD=${WAZUH_API_PASSWORD:-wazuh}
-    volumes:
-      - wazuh-api-configuration:/var/ossec/api/configuration
-      - wazuh-etc:/var/ossec/etc
-      - wazuh-logs:/var/ossec/logs
-      - wazuh-queue:/var/ossec/queue
-      - wazuh-var-multigroups:/var/ossec/var/multigroups
-      - wazuh-integrations:/var/ossec/integrations
-      - wazuh-active-response:/var/ossec/active-response/bin
-      - wazuh-agentless:/var/ossec/agentless
-      - wazuh-wodles:/var/ossec/wodles
-      - wazuh-filebeat-etc:/etc/filebeat
-      - wazuh-filebeat-var:/var/lib/filebeat
-    ports:
-      - "1514:1514/tcp"
-      - "1514:1514/udp"
-      - "1515:1515"
-      - "514:514/udp"
-      - "55000:55000"
-    networks:
-      - soc-network
-    restart: unless-stopped
-
-  wazuh-dashboard:
-    image: wazuh/wazuh-dashboard:4.7.2
-    container_name: wazuh-dashboard
-    hostname: wazuh-dashboard
+    security_opt:
+      - seccomp:unconfined
+    networks: [soc]
     depends_on:
-      - elasticsearch
-      - wazuh-manager
-    environment:
-      - INDEXER_URL=https://elasticsearch:9200
-      - INDEXER_USERNAME=admin
-      - INDEXER_PASSWORD=${ELASTIC_PASSWORD:-changeme}
-      - WAZUH_API_URL=https://wazuh-manager
-      - API_USERNAME=${WAZUH_API_USER:-wazuh}
-      - API_PASSWORD=${WAZUH_API_PASSWORD:-wazuh}
-      - DASHBOARD_USERNAME=kibanaserver
-      - DASHBOARD_PASSWORD=kibanaserver
-    volumes:
-      - wazuh-dashboard-config:/usr/share/wazuh-dashboard/config
-      - wazuh-dashboard-custom:/usr/share/wazuh-dashboard/plugins/wazuh/public/assets/custom
-    ports:
-      - "443:5601"
-    networks:
-      - soc-network
+      - shuffle-backend
     restart: unless-stopped
 
-  # ===========================================
-  # GRAFANA - Metrics Dashboard (Optional)
-  # ===========================================
-  grafana:
-    image: grafana/grafana:10.2.3
-    container_name: grafana
-    hostname: grafana
-    environment:
-      - GF_SECURITY_ADMIN_USER=${GRAFANA_USER:-admin}
-      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin}
-      - GF_INSTALL_PLUGINS=grafana-clock-panel,grafana-piechart-panel
-    volumes:
-      - grafana-data:/var/lib/grafana
-    ports:
-      - "3000:3000"
-    networks:
-      - soc-network
-    restart: unless-stopped
-
-# ===========================================
-# NETWORKS
-# ===========================================
 networks:
-  soc-network:
-    driver: bridge
-    ipam:
-      config:
-        - subnet: 172.28.0.0/16
+  soc:
+    name: soc-lab
 
-# ===========================================
-# VOLUMES
-# ===========================================
 volumes:
-  # Elasticsearch
-  elasticsearch-data:
-
-  # Cassandra
   cassandra-data:
-
-  # TheHive
-  thehive-data:
-
-  # Cortex
-  cortex-data:
-
-  # MISP
-  misp-db-data:
-  misp-data:
-
-  # Shuffle
+  elasticsearch-data:
+  thehive-files:
   shuffle-database:
   shuffle-apps:
   shuffle-files:
-
-  # Wazuh
-  wazuh-api-configuration:
-  wazuh-etc:
-  wazuh-logs:
-  wazuh-queue:
-  wazuh-var-multigroups:
-  wazuh-integrations:
-  wazuh-active-response:
-  wazuh-agentless:
-  wazuh-wodles:
-  wazuh-filebeat-etc:
-  wazuh-filebeat-var:
-  wazuh-dashboard-config:
-  wazuh-dashboard-custom:
-
-  # Grafana
-  grafana-data:

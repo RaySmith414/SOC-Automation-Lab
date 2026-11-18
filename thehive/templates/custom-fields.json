@@ -1,0 +1,25 @@
+[
+  {
+    "name": "Attack vector",
+    "reference": "attack-vector",
+    "description": "How the attacker got in",
+    "type": "string",
+    "mandatory": false,
+    "options": [
+      "Phishing",
+      "Malware",
+      "Exploitation",
+      "Insider",
+      "Physical",
+      "Unknown"
+    ]
+  },
+  {
+    "name": "MITRE ATT&CK tactics",
+    "reference": "mitre-tactics",
+    "description": "ATT&CK tactics seen in the incident",
+    "type": "string",
+    "mandatory": false,
+    "options": []
+  }
+]
